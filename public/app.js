@@ -237,10 +237,13 @@ function initializeMap() {
   state.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
   state.map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
 
+  let layersInitializing = false;
   const setupLayers = () => {
     if (state.map.getSource('cases')) return;
+    if (layersInitializing) return;
     const styleLayers = state.map.getStyle()?.layers;
     if (!styleLayers?.length) return;
+    layersInitializing = true;
     const firstSymbol = styleLayers.find((layer) => layer.type === 'symbol')?.id;
     state.map.addSource('ortho', { type: 'raster', tiles: [ORTHO_TILE_URL], tileSize: 256, attribution: 'Ortofotomapa: GUGiK' });
     state.map.addLayer({ id: 'ortho', type: 'raster', source: 'ortho', paint: { 'raster-opacity': 0.94 } }, firstSymbol);
@@ -269,9 +272,15 @@ function initializeMap() {
     }
     state.map.on('moveend', () => scheduleMapData());
     void loadMapData();
+    layersInitializing = false;
   };
+  const waitForLayers = () => {
+    setupLayers();
+    if (!state.map.getSource('cases')) window.setTimeout(waitForLayers, 250);
+  };
+  state.map.on('load', setupLayers);
   state.map.on('styledata', setupLayers);
-  window.setTimeout(setupLayers, 250);
+  window.setTimeout(waitForLayers, 0);
 }
 
 ui.filters.forEach((button) => button.addEventListener('click', () => {
