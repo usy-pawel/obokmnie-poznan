@@ -266,6 +266,33 @@ button { color: inherit; }
 .map-card { position: relative; min-height: 660px; border-right: 1px solid var(--line); }
 #map { position: absolute; inset: 0; }
 
+.base-layer-switch {
+  position: absolute;
+  top: 14px;
+  left: 14px;
+  z-index: 2;
+  display: inline-flex;
+  padding: 4px;
+  border: 1px solid rgba(21, 44, 42, 0.18);
+  border-radius: 11px;
+  background: rgba(255, 253, 248, 0.96);
+  box-shadow: 0 5px 18px rgba(21, 44, 42, 0.14);
+}
+
+.base-layer-switch button {
+  padding: 8px 11px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.base-layer-switch button.is-active { background: var(--ink); color: #fff; }
+.base-layer-switch button:focus-visible { outline: 3px solid rgba(243, 184, 65, 0.55); outline-offset: 1px; }
+
 .map-loading {
   position: absolute;
   inset: 0;
@@ -318,7 +345,7 @@ button { color: inherit; }
 
 .zoom-hint {
   position: absolute;
-  top: 14px;
+  top: 64px;
   left: 14px;
   z-index: 2;
   margin: 0;
@@ -447,6 +474,23 @@ button { color: inherit; }
 .source-link { color: var(--permit); font-size: 11px; font-weight: 800; text-decoration: none; }
 .source-link:hover { text-decoration: underline; }
 
+.aerial-action {
+  width: 100%;
+  margin: 0 0 11px;
+  padding: 10px 11px;
+  border: 1px solid rgba(21, 44, 42, 0.2);
+  border-radius: 9px;
+  background: var(--ink);
+  color: #fff;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.aerial-action:hover { background: #244541; }
+.aerial-action:focus-visible { outline: 3px solid rgba(243, 184, 65, 0.55); outline-offset: 2px; }
+
 .empty-state { padding: 40px 20px; color: var(--ink-soft); text-align: center; }
 
 .load-more {
@@ -546,8 +590,9 @@ footer {
   .filter-button { flex: 1; padding-inline: 8px; }
   .explorer { border-radius: 17px; }
   .map-card { min-height: 455px; }
-  .map-legend { gap: 8px; max-width: calc(100% - 28px); flex-wrap: wrap; }
-  .zoom-hint { right: 55px; width: fit-content; }
+  .map-legend { bottom: 78px; gap: 8px; max-width: calc(100% - 28px); flex-wrap: wrap; }
+  .base-layer-switch { top: 12px; left: 12px; }
+  .zoom-hint { top: 61px; right: 55px; left: 12px; width: fit-content; }
   .cases-panel { padding: 22px 10px 12px; }
   .context-note { grid-template-columns: auto 1fr; padding: 18px; }
   .context-note a { grid-column: 2; }

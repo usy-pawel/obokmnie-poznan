@@ -1,6 +1,7 @@
 const CASES_URL = '/data/poznan-cases.geojson';
 const PARCELS_URL = '/data/poznan-parcels.geojson';
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
+const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
 const INITIAL_LIST_SIZE = 60;
 const LIST_STEP = 60;
 
@@ -13,6 +14,7 @@ const state = {
   query: '',
   selectedCaseId: null,
   listLimit: INITIAL_LIST_SIZE,
+  baseLayer: 'aerial',
   map: null,
   popup: null,
 };
@@ -28,6 +30,7 @@ const ui = {
   search: document.querySelector('#search-input'),
   loadMore: document.querySelector('#load-more'),
   listNote: document.querySelector('#list-note'),
+  baseLayerButtons: [...document.querySelectorAll('[data-base-layer]')],
 };
 
 function formatDate(value) {
@@ -123,10 +126,40 @@ function renderCases() {
     fragment.querySelector('.case-status').textContent = item.status;
     fragment.querySelector('.detail-id').textContent = item.case_id;
     fragment.querySelector('.detail-parcels').textContent = item.parcel_ids.join(', ');
+    fragment.querySelector('.aerial-action').addEventListener('click', () => showCaseOnAerial(item.case_id));
     button.setAttribute('aria-expanded', String(item.case_id === state.selectedCaseId));
     button.addEventListener('click', () => selectCase(item.case_id, true));
     ui.list.append(fragment);
   }
+}
+
+function parcelFillOpacity() {
+  return state.baseLayer === 'aerial'
+    ? ['interpolate', ['linear'], ['zoom'], 13, 0.12, 16, 0.3]
+    : ['interpolate', ['linear'], ['zoom'], 13, 0.18, 16, 0.58];
+}
+
+function setBaseLayer(layer) {
+  state.baseLayer = layer;
+  ui.baseLayerButtons.forEach((button) => {
+    const active = button.dataset.baseLayer === layer;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  if (!state.map?.getLayer('ortho')) return;
+  state.map.setLayoutProperty('ortho', 'visibility', layer === 'aerial' ? 'visible' : 'none');
+  state.map.setPaintProperty('parcels-fill', 'fill-opacity', parcelFillOpacity());
+}
+
+function showCaseOnAerial(caseId) {
+  state.selectedCaseId = caseId;
+  setBaseLayer('aerial');
+  updateSelectedLayer();
+  const parcelFeatures = state.parcelsByCase.get(caseId) || [];
+  const pointFeature = state.cases.find((feature) => feature.properties.case_id === caseId);
+  const bounds = boundsForFeatures(parcelFeatures.length ? parcelFeatures : [pointFeature]);
+  if (bounds && state.map) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 650 });
+  document.querySelector('.map-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
 function filteredCollections() {
@@ -197,6 +230,21 @@ function popupForCase(caseId, lngLat) {
 }
 
 function addMapLayers() {
+  state.map.addSource('ortho', {
+    type: 'raster',
+    tiles: [ORTHO_TILE_URL],
+    tileSize: 256,
+    minzoom: 5,
+    maxzoom: 19,
+    attribution: 'Ortofotomapa © Główny Urząd Geodezji i Kartografii',
+  });
+  state.map.addLayer({
+    id: 'ortho',
+    type: 'raster',
+    source: 'ortho',
+    layout: { visibility: state.baseLayer === 'aerial' ? 'visible' : 'none' },
+    paint: { 'raster-fade-duration': 120 },
+  });
   state.map.addSource('cases', {
     type: 'geojson',
     data: state.casesCollection,
@@ -249,7 +297,7 @@ function addMapLayers() {
     minzoom: 13,
     paint: {
       'fill-color': ['match', ['get', 'source_type'], 'zgloszenie', '#347c6c', '#e26948'],
-      'fill-opacity': ['interpolate', ['linear'], ['zoom'], 13, 0.18, 16, 0.58],
+      'fill-opacity': parcelFillOpacity(),
     },
   });
   state.map.addLayer({
@@ -287,6 +335,7 @@ function initMap() {
 
   state.map.on('load', () => {
     addMapLayers();
+    setBaseLayer(state.baseLayer);
     const bounds = boundsForFeatures(state.casesCollection.features);
     if (bounds) state.map.fitBounds(bounds, { padding: 50, maxZoom: 11.4, duration: 0 });
     ui.loading.classList.add('is-hidden');
@@ -353,6 +402,10 @@ for (const button of ui.filters) {
     renderCases();
     updateMapData();
   });
+}
+
+for (const button of ui.baseLayerButtons) {
+  button.addEventListener('click', () => setBaseLayer(button.dataset.baseLayer));
 }
 
 let searchTimer;

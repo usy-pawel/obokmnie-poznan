@@ -8,7 +8,7 @@ Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całego Poznania. 
 - 870 unikalnych spraw źródłowych,
 - 833 dokładnie zlokalizowane sprawy publikowane na mapie,
 - wpisy przybliżone, sprzeczne i nierozwiązane nie są publikowane,
-- źródła: GUNB RWDZ, GUGiK ULDK, OpenStreetMap/OpenFreeMap.
+- źródła: GUNB RWDZ, GUGiK ULDK i bezpłatna ortofotomapa WMTS, OpenStreetMap/OpenFreeMap.
 
 ## Lokalny podgląd
 
@@ -38,6 +38,7 @@ Skrypt pobiera granice działek z ULDK wielowątkowo, ponawia nieudane zapytania
 
 - statyczny HTML, CSS i JavaScript,
 - MapLibre GL JS i OpenFreeMap Positron,
+- przełączany podkład ortofotomapy GUGiK bez klucza API i opłat za wyświetlenia,
 - osobny GeoJSON punktów spraw do klastrowania,
 - osobny GeoJSON geometrii działek widoczny przy zbliżeniu,
 - statyczne wdrożenie Railway połączone z gałęzią `main` na GitHubie.

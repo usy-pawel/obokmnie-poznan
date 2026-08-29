@@ -1,5 +1,15 @@
 # Podsumowanie wdrożenia — Poznań
 
+## Aktualizacja: ortofotomapa działek
+
+- domyślny podkład zdjęć lotniczych z bezpłatnej usługi WMTS GUGiK,
+- przełącznik „Mapa / Zdjęcie” dostępny na desktopie i urządzeniach mobilnych,
+- przycisk w szczegółach sprawy pokazujący wybraną działkę na ortofotomapie,
+- obrysy działek zachowują czytelność bez zasłaniania zabudowy,
+- źródło danych jest oznaczone bezpośrednio na mapie.
+
+Kontrola przed wdrożeniem: `npm run check`, `git diff --check`, test przeglądarkowy desktop i mobile 390 × 844 px; 6/6 testów zaliczonych, bez błędów i ostrzeżeń konsoli.
+
 - Data: 29 sierpnia 2026
 - Produkcja: https://obokmnie-poznan-production.up.railway.app
 - Repozytorium: https://github.com/usy-pawel/obokmnie-poznan

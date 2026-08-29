@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=poznan-3" />
+    <link rel="stylesheet" href="/styles.css?v=poznan-4" />
   </head>
   <body>
     <div class="page-shell">
@@ -60,6 +60,10 @@
         <section class="explorer" aria-label="Mapa i lista spraw">
           <div class="map-card">
             <div id="map" aria-label="Interaktywna mapa spraw budowlanych w Poznaniu"></div>
+            <div class="base-layer-switch" role="group" aria-label="Podkład mapy">
+              <button type="button" data-base-layer="streets" aria-pressed="false">Mapa</button>
+              <button class="is-active" type="button" data-base-layer="aerial" aria-pressed="true">Zdjęcie</button>
+            </div>
             <div class="map-loading" id="map-loading">
               <span class="loader"></span>
               <p>Ładowanie mapy Poznania…</p>
@@ -105,7 +109,7 @@
       </main>
 
       <footer>
-        <p>Źródła: GUNB RWDZ, GUGiK ULDK, OpenStreetMap.</p>
+        <p>Źródła: GUNB RWDZ, GUGiK ULDK i ortofotomapa, OpenStreetMap.</p>
         <p>Aktualizacja danych: 29 sierpnia 2026</p>
       </footer>
     </div>
@@ -129,6 +133,9 @@
             <div><dt>Numer GUNB</dt><dd class="detail-id"></dd></div>
             <div><dt>Działki</dt><dd class="detail-parcels"></dd></div>
           </dl>
+          <button class="aerial-action" type="button">
+            <span aria-hidden="true">◫</span> Pokaż działkę na zdjęciu lotniczym
+          </button>
           <a class="source-link" href="https://wyszukiwarka.gunb.gov.pl/" target="_blank" rel="noreferrer">
             Otwórz wyszukiwarkę GUNB <span aria-hidden="true">↗</span>
           </a>
@@ -137,6 +144,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=poznan-3"></script>
+    <script type="module" src="/app.js?v=poznan-4"></script>
   </body>
 </html>
