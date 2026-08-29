@@ -1,36 +1,56 @@
-# Podsumowanie wdrożenia
+# Podsumowanie wdrożenia — Poznań
 
 - Data: 29 sierpnia 2026
-- Produkcja: https://obokmnie-strzeszyn-production.up.railway.app
-- Repozytorium: https://github.com/usy-pawel/obokmnie-strzeszyn
-- Railway: projekt `obokmnie-strzeszyn`, środowisko `production`
+- Produkcja: https://obokmnie-poznan-production.up.railway.app
+- Repozytorium: https://github.com/usy-pawel/obokmnie-poznan
+- Railway: projekt `obokmnie-poznan`, środowisko `production`
 - Forma: statyczna strona publikowana z katalogu `public`
+
+## Zakres
+
+- 870 unikalnych spraw źródłowych z ostatnich 12 miesięcy,
+- 833 dokładnie zlokalizowane sprawy opublikowane jako punkty,
+- 1 887 opublikowanych geometrii działek,
+- 163 identyfikatory działek bez odpowiedzi ULDK,
+- 3 geometrie spoza kontrolnego obszaru Poznania wykryte i odrzucone,
+- pliki mapy: łącznie około 3,25 MB.
+
+## Zmierzony czas danych
+
+```text
+Pierwsze pobranie 1 815 identyfikatorów ULDK: 162,02 s
+Uzupełnienie i ponowienie 208 identyfikatorów: 53,27 s
+Ponowne zbudowanie z pełnego cache: 0,12 s
+```
+
+Pełne przygotowanie danych od zimnego cache zajmuje około 3–4 minut. Kolejna publikacja z istniejącym cache trwa poniżej sekundy plus czas pobrania wyłącznie nowych działek.
 
 ## Lokalne CI
 
-Polecenie:
+Polecenia:
 
 ```powershell
+npm install --package-lock-only --ignore-scripts
 npm run check
+git diff --check
 ```
 
 Wynik końcowy:
 
 ```text
-tests 3
-pass 3
+audited 1 package, 0 vulnerabilities
+tests 6
+pass 6
 fail 0
-duration_ms 107.6229
+git diff --check: bez uwag
 ```
 
-Kontrole obejmują poprawność składni JavaScript, liczbę geometrii i spraw, typ geometrii, źródło ULDK, kompletność pól publicznych oraz położenie wszystkich punktów w kontrolnym zakresie Strzeszyna.
+Kontrole obejmują składnię JavaScript, liczbę i unikalność spraw, dokładność danych, typy i zakres geometrii, kompletność pól, spójność metryk oraz maksymalny rozmiar plików.
 
-## Kontrola produkcyjna
+## Kontrola przeglądarkowa
 
-```text
-GET /                                      -> 200
-GET /data/strzeszyn-parcels.geojson        -> 200
-strona zawiera „Co budują na Strzeszynie?” -> tak
-```
-
-Przeprowadzono także kontrolę wizualną w przeglądarce dla widoku desktopowego i mobilnego oraz test filtra „Zgłoszenia”. Konsola przeglądarki: 0 błędów, 0 ostrzeżeń.
+- desktop: mapa, klastry, wyszukiwanie i wybór działki — zaliczone,
+- mobile 390 × 844 px — zaliczone,
+- filtr „Zgłoszenia” — 117 wyników,
+- wyszukiwanie „Rostworowskiego” — 1 wynik i poprawna geometria,
+- konsola świeżej sesji: 0 błędów, 0 ostrzeżeń.

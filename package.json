@@ -1,9 +1,9 @@
 {
-  "name": "obokmnie-strzeszyn-tmvp",
+  "name": "obokmnie-poznan-tmvp",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Publiczny T-MVP mapy spraw budowlanych dla Strzeszyna.",
+  "description": "Publiczny T-MVP mapy spraw budowlanych dla Poznania.",
   "engines": {
     "node": ">=20"
   },

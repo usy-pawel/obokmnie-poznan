@@ -6,24 +6,24 @@
     <meta name="theme-color" content="#f5f1e9" />
     <meta
       name="description"
-      content="Zobacz potwierdzone sprawy budowlane ze Strzeszyna na interaktywnej mapie działek."
+      content="Zobacz potwierdzone sprawy budowlane z całego Poznania na interaktywnej mapie działek."
     />
-    <title>Co budują na Strzeszynie?</title>
+    <title>Co budują w Poznaniu?</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css" />
+    <link rel="stylesheet" href="/styles.css?v=poznan-3" />
   </head>
   <body>
     <div class="page-shell">
       <header class="site-header">
-        <a class="brand" href="/" aria-label="Co budują na Strzeszynie — strona główna">
+        <a class="brand" href="/" aria-label="Co budują w Poznaniu — strona główna">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span>obok<span>mnie</span></span>
         </a>
         <div class="location-chip">
           <span class="location-dot" aria-hidden="true"></span>
-          Strzeszyn · Poznań
+          Poznań
         </div>
       </header>
 
@@ -31,51 +31,60 @@
         <section class="hero" aria-labelledby="page-title">
           <div class="hero-copy">
             <p class="eyebrow">Publiczne dane, po ludzku</p>
-            <h1 id="page-title">Co budują<br /><em>na Strzeszynie?</em></h1>
+            <h1 id="page-title">Co budują<br /><em>w Poznaniu?</em></h1>
             <p class="hero-lead">
-              Sprawdź najnowsze sprawy budowlane w sąsiedztwie. Kliknij działkę, aby zobaczyć,
-              czego dotyczy wpis i kiedy trafił do urzędu.
+              Sprawdź sprawy budowlane z ostatnich 12 miesięcy. Przybliż mapę, aby zobaczyć
+              dokładne granice działek, albo wyszukaj ulicę, inwestycję czy numer sprawy.
             </p>
           </div>
-          <div class="hero-stat" aria-label="Liczba potwierdzonych spraw">
-            <strong id="hero-count">6</strong>
-            <span>potwierdzonych<br />spraw</span>
+          <div class="hero-stat" aria-label="Liczba dokładnie zlokalizowanych spraw">
+            <strong id="hero-count">—</strong>
+            <span>dokładnie<br />zlokalizowanych spraw</span>
           </div>
         </section>
 
         <section class="toolbar" aria-label="Filtrowanie mapy">
+          <label class="search-box">
+            <span aria-hidden="true">⌕</span>
+            <span class="sr-only">Szukaj sprawy, ulicy lub inwestycji</span>
+            <input id="search-input" type="search" placeholder="Szukaj ulicy, inwestycji lub numeru sprawy…" autocomplete="off" />
+          </label>
           <div class="filter-group" role="group" aria-label="Rodzaj sprawy">
             <button class="filter-button is-active" type="button" data-filter="all">Wszystkie</button>
             <button class="filter-button" type="button" data-filter="wniosek_decyzja">Pozwolenia</button>
             <button class="filter-button" type="button" data-filter="zgloszenie">Zgłoszenia</button>
           </div>
-          <p class="toolbar-note"><span></span>Dane z ostatnich 12 miesięcy</p>
+          <p class="toolbar-note"><span></span>Dane: 27.08.2025–27.08.2026</p>
         </section>
 
         <section class="explorer" aria-label="Mapa i lista spraw">
           <div class="map-card">
-            <div id="map" aria-label="Interaktywna mapa działek na Strzeszynie"></div>
+            <div id="map" aria-label="Interaktywna mapa spraw budowlanych w Poznaniu"></div>
             <div class="map-loading" id="map-loading">
               <span class="loader"></span>
-              <p>Ładowanie mapy działek…</p>
+              <p>Ładowanie mapy Poznania…</p>
             </div>
             <div class="map-legend" aria-label="Legenda mapy">
+              <span><i class="legend-cluster"></i>Grupa spraw</span>
               <span><i class="legend-permit"></i>Pozwolenie</span>
               <span><i class="legend-notice"></i>Zgłoszenie</span>
             </div>
+            <p class="zoom-hint">Przybliż mapę, aby zobaczyć granice działek</p>
           </div>
 
           <aside class="cases-panel" aria-labelledby="cases-heading">
             <div class="cases-heading-row">
               <div>
                 <p class="eyebrow">Potwierdzone lokalizacje</p>
-                <h2 id="cases-heading">Sprawy w okolicy</h2>
+                <h2 id="cases-heading">Sprawy w Poznaniu</h2>
               </div>
-              <span class="result-count" id="result-count">6</span>
+              <span class="result-count" id="result-count">—</span>
             </div>
+            <p class="list-note" id="list-note"></p>
             <div class="cases-list" id="cases-list" aria-live="polite"></div>
+            <button class="load-more" id="load-more" type="button" hidden>Pokaż kolejne sprawy</button>
             <div class="empty-state" id="empty-state" hidden>
-              <p>Brak spraw dla wybranego filtra.</p>
+              <p>Brak spraw dla wybranych kryteriów.</p>
             </div>
           </aside>
         </section>
@@ -86,7 +95,7 @@
             <h2>Co oznaczają te dane?</h2>
             <p>
               Wpis w rejestrze oznacza formalną sprawę urzędową — nie przesądza, że inwestycja
-              na pewno powstanie. Pokazujemy wyłącznie lokalizacje potwierdzone w oficjalnych danych.
+              na pewno powstanie. Publikujemy wyłącznie lokalizacje dokładnie potwierdzone w danych urzędowych.
             </p>
           </div>
           <a href="https://wyszukiwarka.gunb.gov.pl/o-wyszukiwarce/" target="_blank" rel="noreferrer">
@@ -128,6 +137,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js"></script>
+    <script type="module" src="/app.js?v=poznan-3"></script>
   </body>
 </html>

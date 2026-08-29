@@ -1,4 +1,5 @@
 node_modules/
 .railway/
+.cache/
 .DS_Store
 npm-debug.log*
