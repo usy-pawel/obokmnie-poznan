@@ -243,7 +243,7 @@ def variants_for(parcel_id):
 
 def fetch_parcel(parcel_id):
     if requests is None:
-        raise RuntimeError("Zainstaluj zależności: pip install -r requirements.txt")
+        raise RuntimeError("Zainstaluj zależności: pip install -r scripts/requirements.txt")
     if not hasattr(THREAD_LOCAL, "session"):
         THREAD_LOCAL.session = requests.Session()
         THREAD_LOCAL.session.headers.update({"User-Agent": "obokmnie-polska/1.0"})
@@ -341,7 +341,7 @@ def fetch_missing_parcels(database):
 
 def postgres_connection():
     if psycopg is None:
-        raise RuntimeError("Zainstaluj zależności: pip install -r requirements.txt")
+        raise RuntimeError("Zainstaluj zależności: pip install -r scripts/requirements.txt")
     url = os.environ.get("DATABASE_PUBLIC_URL") or os.environ.get("DATABASE_URL")
     sslmode = os.environ.get("PGSSLMODE", "require")
     if url:

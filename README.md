@@ -17,7 +17,7 @@ Wymagane są Node.js 20+, Python 3.11+ oraz PostgreSQL z PostGIS.
 
 ```powershell
 npm install
-pip install -r requirements.txt
+pip install -r scripts/requirements.txt
 $env:DATABASE_URL='postgresql://...'
 $env:PGSSLMODE='disable'
 npm run migrate
