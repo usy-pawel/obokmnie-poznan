@@ -8,8 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "start": "node server.mjs",
-    "test": "node --test",
-    "check": "node --check server.mjs && node --check public/app.js && node --test"
+    "test": "node --test tests/data.test.mjs",
+    "check": "node --check public/app.js && npm test"
   }
 }

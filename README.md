@@ -4,13 +4,13 @@ Publiczna, interaktywna mapa sześciu potwierdzonych spraw budowlanych ze Strzes
 
 ## Uruchomienie
 
-Wymagany jest Node.js 20 lub nowszy.
+Do lokalnego podglądu wystarczy dowolny statyczny serwer HTTP, np. Python 3:
 
 ```powershell
-npm start
+python -m http.server 3000 --directory public
 ```
 
-Strona będzie dostępna pod `http://localhost:3000`, a kontrola zdrowia pod `/health`.
+Strona będzie dostępna pod `http://localhost:3000`.
 
 ## Lokalne CI
 
@@ -18,7 +18,7 @@ Strona będzie dostępna pod `http://localhost:3000`, a kontrola zdrowia pod `/h
 npm run check
 ```
 
-Kontrole obejmują składnię JavaScript, spójność GeoJSON, kompletność sześciu spraw, położenie geometrii w kontrolnym zakresie Strzeszyna oraz działanie serwera HTTP.
+Kontrole obejmują składnię JavaScript, spójność GeoJSON, kompletność sześciu spraw i położenie geometrii w kontrolnym zakresie Strzeszyna.
 
 ## Aktualizacja danych
 
@@ -30,7 +30,7 @@ Skrypt `scripts/build-geojson.py` pobiera pełne geometrie działek z ULDK dla s
 - MapLibre GL JS,
 - mapa bazowa OpenFreeMap Positron,
 - statyczny GeoJSON dla T‑MVP,
-- minimalny serwer Node.js gotowy do wdrożenia na Railway.
+- statyczne wdrożenie Railway bez warstwy aplikacyjnej.
 
 Przy skali całej Polski statyczny GeoJSON powinien zostać zastąpiony przez PostgreSQL/PostGIS i kafle wektorowe.
 
