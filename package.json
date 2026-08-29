@@ -1,15 +1,24 @@
 {
-  "name": "obokmnie-wielkopolska-tmvp",
+  "name": "obokmnie-polska-tmvp",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Publiczny T-MVP mapy spraw budowlanych dla Wielkopolski.",
+  "description": "Publiczny T-MVP mapy spraw budowlanych dla całej Polski.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
-    "build:data": "python scripts/build-wielkopolska-geojson.py",
-    "test": "node --test tests/data.test.mjs",
-    "check": "node --check public/app.js && npm test"
+    "start": "node server.js",
+    "migrate": "node scripts/migrate.mjs",
+    "import:data": "python scripts/import-poland-postgis.py",
+    "import:egib": "python scripts/import-egib-geoparquet.py",
+    "smoke": "node scripts/smoke-api.mjs",
+    "test": "node --test tests/poland.test.mjs && python -m unittest discover -s tests -p \"test_*.py\"",
+    "check": "node --check server.js && node --check public/app.js && node --check scripts/migrate.mjs && python -m py_compile scripts/import-poland-postgis.py scripts/import-egib-geoparquet.py && npm test"
+  },
+  "dependencies": {
+    "compression": "^1.8.1",
+    "express": "^5.2.1",
+    "pg": "^8.23.0"
   }
 }

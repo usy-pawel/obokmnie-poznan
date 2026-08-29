@@ -1,22 +1,30 @@
-# Co budują w Wielkopolsce? — T‑MVP
+# Co budują w Polsce? — T‑MVP
 
-Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całego województwa wielkopolskiego. Widok regionalny pokazuje klastry spraw, a przy zbliżeniu rzeczywiste granice działek pobrane z oficjalnej usługi ULDK.
+Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całej Polski. Widok kraju pokazuje lekkie skupiska spraw, a po przybliżeniu lub wyszukaniu API zwraca pojedyncze sprawy i rzeczywiste granice działek z oficjalnej usługi ULDK.
 
 ## Dane
 
-- okres: 24 sierpnia 2025 – 24 sierpnia 2026,
-- 14 980 opublikowanych spraw i 29 503 powiązania spraw z geometriami działek,
+- okres: ostatnie 12 miesięcy według najnowszego wpisu w źródłach,
+- 193 161 unikalnych spraw w bieżącym imporcie,
+- 175 385 spraw z dokładną geometrią, obejmujących wszystkie 16 województw,
+- 406 495 unikalnych identyfikatorów działek do weryfikacji,
 - publikowane są wyłącznie sprawy z co najmniej jedną dokładnie potwierdzoną geometrią działki,
-- geometrie są dzielone przestrzennie i pobierane dopiero po przybliżeniu mapy,
-- źródła: GUNB RWDZ, GUGiK ULDK i bezpłatna ortofotomapa WMTS, OpenStreetMap/OpenFreeMap.
+- źródła: GUNB RWDZ, GUGiK ULDK, bezpłatna ortofotomapa WMTS oraz OpenStreetMap/OpenFreeMap.
 
-## Lokalny podgląd
+## Uruchomienie lokalne
+
+Wymagane są Node.js 20+, Python 3.11+ oraz PostgreSQL z PostGIS.
 
 ```powershell
-python -m http.server 3000 --directory public
+npm install
+pip install -r requirements.txt
+$env:DATABASE_URL='postgresql://...'
+$env:PGSSLMODE='disable'
+npm run migrate
+npm start
 ```
 
-Strona będzie dostępna pod `http://localhost:3000`.
+Strona będzie dostępna pod `http://localhost:3000`, a stan usługi pod `/health`.
 
 ## Lokalne CI
 
@@ -24,23 +32,22 @@ Strona będzie dostępna pod `http://localhost:3000`.
 npm run check
 ```
 
-Kontrole obejmują składnię JavaScript, liczbę i unikalność spraw, dokładność danych, typy i zakres geometrii, kompletność pól oraz maksymalny rozmiar statycznych plików.
+Kontrole obejmują składnię serwera, frontendu, migracji i importera oraz testy danych. GitHub Actions nie jest bramką wdrożenia.
 
 ## Aktualizacja danych
 
 ```powershell
-python scripts/build-wielkopolska-geojson.py
+npm run import:egib
+npm run import:data
 ```
 
-Skrypt filtruje oba rejestry GUNB do Wielkopolski, grupuje powtarzające się wiersze spraw, pobiera granice działek z ULDK wielowątkowo, ponawia nieudane zapytania i korzysta z lokalnego cache w `.cache/`. Lokalizacji nie wybiera AI.
+Importer strumieniowo czyta 17 bieżących archiwów GUNB, normalizuje ostatnie 12 miesięcy w lokalnym etapie SQLite i usuwa duplikaty spraw. Geometrie są najpierw łączone zbiorczo z oficjalnym krajowym GeoParquet EGiB, a ULDK pozostaje awaryjnym źródłem dla brakujących identyfikatorów. Wyniki trafiają do wznawialnego cache w `.cache/`, a następnie do PostGIS. Lokalizacji nie wybiera AI.
 
 ## Architektura
 
-- statyczny HTML, CSS i JavaScript,
+- statyczny HTML, CSS i JavaScript obsługiwany przez Express,
+- PostgreSQL/PostGIS jako baza spraw, działek i relacji,
+- lekkie agregaty przestrzenne dla widoku kraju i zapytania po obszarze dla większego zbliżenia,
 - MapLibre GL JS i OpenFreeMap Positron,
-- przełączany podkład ortofotomapy GUGiK bez klucza API i opłat za wyświetlenia,
-- osobny GeoJSON punktów spraw do klastrowania,
-- małe przestrzenne fragmenty GeoJSON działek ładowane tylko dla oglądanego obszaru,
-- statyczne wdrożenie Railway połączone z gałęzią `main` na GitHubie.
-
-Przy skali całej Polski statyczne fragmenty powinny zostać zastąpione przez PostgreSQL/PostGIS i kafle wektorowe.
+- przełączany podkład ortofotomapy GUGiK bez klucza API,
+- Railway połączony z gałęzią `main` na GitHubie.
