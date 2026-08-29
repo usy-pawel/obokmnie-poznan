@@ -25,8 +25,8 @@ app.get('/api/meta', async (_request, response, next) => {
   try {
     const result = await pool.query(`
       SELECT count(*)::int AS published_cases,
-             min(received_date) AS period_start,
-             max(received_date) AS period_end,
+             to_char(min(received_date),'YYYY-MM-DD') AS period_start,
+             to_char(max(received_date),'YYYY-MM-DD') AS period_end,
              count(DISTINCT voivodeship)::int AS voivodeships
       FROM cases WHERE published
     `);
@@ -65,7 +65,8 @@ app.get('/api/map', async (request, response, next) => {
           WHERE city_case.published AND lower(city_case.city)=lower($6)
         ) AS found
       )
-      SELECT c.case_key, c.external_id, c.source_type, c.received_date, c.status,
+      SELECT c.case_key, c.external_id, c.source_type,
+             to_char(c.received_date,'YYYY-MM-DD') AS received_date, c.status,
              c.city, c.address, c.description, c.voivodeship,
              ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
              (SELECT count(*)::int
@@ -99,7 +100,8 @@ app.get('/api/search', async (request, response, next) => {
           WHERE city_case.published AND lower(city_case.city)=lower($1)
         ) AS found
       )
-      SELECT c.case_key, c.external_id, c.source_type, c.received_date, c.status,
+      SELECT c.case_key, c.external_id, c.source_type,
+             to_char(c.received_date,'YYYY-MM-DD') AS received_date, c.status,
              c.city, c.address, c.description, c.voivodeship,
              ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
              (SELECT count(*)::int
@@ -118,10 +120,46 @@ app.get('/api/search', async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/api/suggestions', async (request, response, next) => {
+  try {
+    const query = String(request.query.q || '').trim().slice(0, 80)
+      .replace(/[^\p{L}\p{N}\s-]/gu, '');
+    if (query.length < 2) return response.json([]);
+    const result = await pool.query(`
+      SELECT label, context, kind
+      FROM (
+        SELECT city AS label,
+               CASE WHEN count(DISTINCT voivodeship)=1 THEN min(voivodeship)
+                    ELSE 'kilka województw' END AS context,
+               'city' AS kind,
+               count(*)::int AS frequency,
+               (lower(city)=lower($1))::int AS exact_match,
+               1 AS kind_order
+        FROM cases
+        WHERE published AND city<>'' AND lower(city) LIKE lower($1)||'%'
+        GROUP BY city
+        UNION ALL
+        SELECT voivodeship AS label, 'województwo' AS context, 'voivodeship' AS kind,
+               count(*)::int AS frequency,
+               (lower(voivodeship)=lower($1))::int AS exact_match,
+               0 AS kind_order
+        FROM cases
+        WHERE published AND voivodeship<>'' AND lower(voivodeship) LIKE lower($1)||'%'
+        GROUP BY voivodeship
+      ) suggestions
+      ORDER BY exact_match DESC, kind_order, frequency DESC, label
+      LIMIT 7
+    `, [query]);
+    response.json(result.rows);
+  } catch (error) { next(error); }
+});
+
 app.get('/api/cases/:caseKey', async (request, response, next) => {
   try {
     const result = await pool.query(`
-      SELECT c.case_key, c.external_id, c.source_type, c.received_date, c.decision_date,
+      SELECT c.case_key, c.external_id, c.source_type,
+             to_char(c.received_date,'YYYY-MM-DD') AS received_date,
+             to_char(c.decision_date,'YYYY-MM-DD') AS decision_date,
              c.status, c.office, c.voivodeship, c.city, c.address, c.case_kind, c.description,
              c.parcel_ids, ST_AsGeoJSON(c.location)::json AS location,
              coalesce(json_agg(json_build_object('parcel_id',p.parcel_id,'geometry',ST_AsGeoJSON(p.geom)::json))

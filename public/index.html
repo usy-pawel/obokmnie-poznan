@@ -44,11 +44,23 @@
         </section>
 
         <section class="toolbar" aria-label="Filtrowanie mapy">
-          <label class="search-box">
-            <span aria-hidden="true">⌕</span>
-            <span class="sr-only">Szukaj sprawy, ulicy lub inwestycji</span>
-            <input id="search-input" type="search" placeholder="Szukaj ulicy, inwestycji lub numeru sprawy…" autocomplete="off" />
-          </label>
+          <div class="search-wrap">
+            <label class="search-box">
+              <span aria-hidden="true">⌕</span>
+              <span class="sr-only">Szukaj sprawy, ulicy lub inwestycji</span>
+              <input
+                id="search-input"
+                type="search"
+                role="combobox"
+                placeholder="Szukaj ulicy, inwestycji lub numeru sprawy…"
+                autocomplete="off"
+                aria-autocomplete="list"
+                aria-controls="search-suggestions"
+                aria-expanded="false"
+              />
+            </label>
+            <ul class="search-suggestions" id="search-suggestions" role="listbox" hidden></ul>
+          </div>
           <div class="filter-group" role="group" aria-label="Rodzaj sprawy">
             <button class="filter-button is-active" type="button" data-filter="all">Wszystkie</button>
             <button class="filter-button" type="button" data-filter="wniosek_decyzja">Pozwolenia</button>
@@ -144,6 +156,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-5"></script>
+    <script type="module" src="/app.js?v=polska-6"></script>
   </body>
 </html>

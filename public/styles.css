@@ -180,9 +180,13 @@ button { color: inherit; }
   margin-bottom: 18px;
 }
 
-.search-box {
+.search-wrap {
   min-width: min(390px, 36vw);
   flex: 1;
+  position: relative;
+}
+
+.search-box {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -211,6 +215,44 @@ button { color: inherit; }
 }
 
 .search-box input::placeholder { color: #7c8985; }
+
+.search-suggestions {
+  position: absolute;
+  top: calc(100% + 7px);
+  right: 0;
+  left: 0;
+  z-index: 10;
+  margin: 0;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 14px 34px rgba(21, 44, 42, 0.16);
+  list-style: none;
+}
+
+.search-suggestions[hidden] { display: none; }
+
+.search-suggestion {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 11px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.search-suggestion:hover,
+.search-suggestion[aria-selected="true"] { background: #edf1eb; }
+
+.search-suggestion strong { font-size: 13px; font-weight: 750; }
+.search-suggestion span { color: var(--ink-soft); font-size: 10px; white-space: nowrap; }
 
 .filter-group {
   display: inline-flex;
@@ -457,6 +499,12 @@ button { color: inherit; }
   -webkit-line-clamp: 2;
 }
 
+.case-card.is-selected .case-title {
+  display: block;
+  overflow: visible;
+  -webkit-line-clamp: unset;
+}
+
 .case-address { display: block; color: var(--ink-soft); font-size: 12px; line-height: 1.4; }
 .case-footer { margin-top: 13px; }
 
@@ -572,7 +620,7 @@ footer {
   .hero { grid-template-columns: 1fr; gap: 24px; }
   .hero-stat { justify-self: start; }
   .toolbar { flex-wrap: wrap; }
-  .search-box { min-width: 100%; }
+  .search-wrap { min-width: 100%; }
   .explorer { grid-template-columns: 1fr; }
   .map-card { min-height: 520px; border-right: 0; border-bottom: 1px solid var(--line); }
   .cases-list { max-height: none; }
@@ -580,7 +628,7 @@ footer {
 
 @media (max-width: 1280px) and (min-width: 941px) {
   .toolbar { flex-wrap: wrap; }
-  .search-box { flex-basis: 100%; }
+  .search-wrap { flex-basis: 100%; }
 }
 
 @media (max-width: 620px) {
@@ -592,7 +640,7 @@ footer {
   .hero h1 { font-size: clamp(46px, 15vw, 65px); }
   .hero-stat { min-width: 0; width: 100%; justify-content: center; }
   .toolbar { align-items: flex-start; flex-direction: column; }
-  .search-box { width: 100%; }
+  .search-wrap { width: 100%; }
   .filter-group { width: 100%; }
   .filter-button { flex: 1; padding-inline: 8px; }
   .explorer { border-radius: 17px; }

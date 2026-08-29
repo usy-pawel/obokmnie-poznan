@@ -16,6 +16,11 @@ const meta = await get('/api/meta');
 assert.ok(meta.published_cases > 0, 'no published cases');
 assert.ok(meta.voivodeships > 0, 'no voivodeships');
 
+const suggestions = await get('/api/suggestions?q=poz');
+assert.ok(suggestions.length > 0 && suggestions.length <= 7, 'invalid suggestion count');
+assert.ok(suggestions.every((item) => ['city', 'voivodeship'].includes(item.kind)));
+assert.ok(suggestions.every((item) => item.label && item.context));
+
 const overview = await get('/api/map?bbox=14,48.8,24.3,55.3&zoom=6');
 assert.equal(overview.type, 'FeatureCollection');
 assert.ok(overview.features.length > 0, 'country map is empty');
@@ -38,4 +43,5 @@ console.log(JSON.stringify({
   country_clusters: overview.features.length,
   poznan_cases: poznan.features.length,
   selected_parcels: detail.parcels.length,
+  suggestions: suggestions.length,
 }));

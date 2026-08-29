@@ -28,7 +28,7 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
 });
 
 test('API exposes health, overview, search and case detail routes', () => {
-  for (const route of ['/health', '/api/meta', '/api/map', '/api/search', '/api/cases/:caseKey']) {
+  for (const route of ['/health', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
@@ -37,6 +37,8 @@ test('API exposes health, overview, search and case detail routes', () => {
   assert.match(server, /exact_city/);
   assert.match(server, /parcel_count/);
   assert.match(server, /NOT ST_IsEmpty/);
+  assert.match(server, /LIMIT 7/);
+  assert.match(server, /to_char\(c\.received_date,'YYYY-MM-DD'\)/);
 });
 
 test('country frontend loads data by viewport and parcel detail on demand', () => {
@@ -49,6 +51,9 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /baseLayer: 'streets'/);
   assert.match(frontend, /scrollSelectedCard/);
   assert.match(frontend, /detail\?\.parcels/);
+  assert.match(frontend, /loadSuggestions/);
+  assert.match(frontend, /aria-activedescendant/);
   assert.match(html, /data-base-layer="streets" aria-pressed="true"/);
+  assert.match(html, /role="combobox"/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);
 });

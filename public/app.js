@@ -14,6 +14,10 @@ const state = {
   lastFittedQuery: '',
   requestController: null,
   requestTimer: null,
+  suggestions: [],
+  suggestionIndex: -1,
+  suggestionController: null,
+  suggestionTimer: null,
 };
 
 const ui = {
@@ -25,6 +29,8 @@ const ui = {
   template: document.querySelector('#case-card-template'),
   filters: [...document.querySelectorAll('[data-filter]')],
   search: document.querySelector('#search-input'),
+  searchWrap: document.querySelector('.search-wrap'),
+  suggestions: document.querySelector('#search-suggestions'),
   loadMore: document.querySelector('#load-more'),
   listNote: document.querySelector('#list-note'),
   baseLayerButtons: [...document.querySelectorAll('[data-base-layer]')],
@@ -59,6 +65,83 @@ function shortTitle(value = '') {
 
 function typeLabel(properties) {
   return properties.source_type === 'zgloszenie' ? 'Zgłoszenie' : 'Pozwolenie';
+}
+
+function hideSuggestions() {
+  state.suggestionIndex = -1;
+  ui.suggestions.hidden = true;
+  ui.search.setAttribute('aria-expanded', 'false');
+  ui.search.removeAttribute('aria-activedescendant');
+}
+
+function chooseSuggestion(suggestion) {
+  ui.search.value = suggestion.label;
+  state.query = suggestion.label;
+  state.lastFittedQuery = '';
+  state.listLimit = LIST_SIZE;
+  hideSuggestions();
+  scheduleMapData(0);
+}
+
+function renderSuggestions() {
+  ui.suggestions.replaceChildren();
+  if (!state.suggestions.length) {
+    hideSuggestions();
+    return;
+  }
+  state.suggestions.forEach((suggestion, index) => {
+    const item = document.createElement('li');
+    item.setAttribute('role', 'presentation');
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'search-suggestion';
+    button.id = `search-suggestion-${index}`;
+    button.setAttribute('role', 'option');
+    button.setAttribute('aria-selected', String(index === state.suggestionIndex));
+    button.setAttribute('aria-label', `${suggestion.label}, ${suggestion.context}`);
+    const label = document.createElement('strong');
+    label.textContent = suggestion.label;
+    const context = document.createElement('span');
+    context.textContent = suggestion.context;
+    button.append(label, context);
+    button.addEventListener('click', () => chooseSuggestion(suggestion));
+    item.append(button);
+    ui.suggestions.append(item);
+  });
+  ui.suggestions.hidden = false;
+  ui.search.setAttribute('aria-expanded', 'true');
+  if (state.suggestionIndex >= 0) {
+    ui.search.setAttribute('aria-activedescendant', `search-suggestion-${state.suggestionIndex}`);
+  } else {
+    ui.search.removeAttribute('aria-activedescendant');
+  }
+}
+
+async function loadSuggestions(query) {
+  state.suggestionController?.abort();
+  if (query.length < 2) {
+    state.suggestions = [];
+    renderSuggestions();
+    return;
+  }
+  state.suggestionController = new AbortController();
+  try {
+    const response = await fetch(`/api/suggestions?q=${encodeURIComponent(query)}`, {
+      signal: state.suggestionController.signal,
+    });
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    if (ui.search.value.trim() !== query) return;
+    state.suggestions = await response.json();
+    state.suggestionIndex = -1;
+    renderSuggestions();
+  } catch (error) {
+    if (error.name !== 'AbortError') hideSuggestions();
+  }
+}
+
+function scheduleSuggestions(query, delay = 160) {
+  window.clearTimeout(state.suggestionTimer);
+  state.suggestionTimer = window.setTimeout(() => { void loadSuggestions(query); }, delay);
 }
 
 function caseKey(properties) {
@@ -123,7 +206,9 @@ function renderCases() {
     details.hidden = !selected;
     fragment.querySelector('.case-type').textContent = typeLabel(item);
     fragment.querySelector('.case-date').textContent = formatDate(item.received_date);
-    fragment.querySelector('.case-title').textContent = shortTitle(item.description) || 'Sprawa budowlana';
+    const title = shortTitle(item.description) || 'Sprawa budowlana';
+    fragment.querySelector('.case-title').textContent = title;
+    fragment.querySelector('.case-title').title = title;
     fragment.querySelector('.case-address').textContent = item.address || item.city || item.voivodeship;
     fragment.querySelector('.case-status').textContent = item.status || 'brak statusu';
     fragment.querySelector('.detail-id').textContent = item.external_id || key;
@@ -345,7 +430,36 @@ ui.search.addEventListener('input', () => {
   state.query = ui.search.value.trim();
   if (!state.query) state.lastFittedQuery = '';
   state.listLimit = LIST_SIZE;
+  scheduleSuggestions(state.query);
   scheduleMapData(320);
+});
+
+ui.search.addEventListener('focus', () => {
+  if (ui.search.value.trim().length >= 2) scheduleSuggestions(ui.search.value.trim(), 0);
+});
+
+ui.search.addEventListener('keydown', (event) => {
+  if (!state.suggestions.length || ui.suggestions.hidden) {
+    if (event.key === 'Escape') hideSuggestions();
+    return;
+  }
+  if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+    event.preventDefault();
+    const direction = event.key === 'ArrowDown' ? 1 : -1;
+    state.suggestionIndex = (state.suggestionIndex + direction + state.suggestions.length)
+      % state.suggestions.length;
+    renderSuggestions();
+  } else if (event.key === 'Enter' && state.suggestionIndex >= 0) {
+    event.preventDefault();
+    chooseSuggestion(state.suggestions[state.suggestionIndex]);
+  } else if (event.key === 'Escape') {
+    event.preventDefault();
+    hideSuggestions();
+  }
+});
+
+document.addEventListener('pointerdown', (event) => {
+  if (!ui.searchWrap.contains(event.target)) hideSuggestions();
 });
 
 ui.loadMore.addEventListener('click', () => {
