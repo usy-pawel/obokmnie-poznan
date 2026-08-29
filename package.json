@@ -1,0 +1,15 @@
+{
+  "name": "obokmnie-strzeszyn-tmvp",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Publiczny T-MVP mapy spraw budowlanych dla Strzeszyna.",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test",
+    "check": "node --check server.mjs && node --check public/app.js && node --test"
+  }
+}
