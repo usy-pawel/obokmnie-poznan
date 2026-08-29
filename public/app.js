@@ -1,5 +1,5 @@
-const CASES_URL = '/data/poznan-cases.geojson';
-const PARCELS_URL = '/data/poznan-parcels.geojson';
+const CASES_URL = '/data/wielkopolska-cases.geojson';
+const PARCEL_MANIFEST_URL = '/data/wielkopolska-parcel-manifest.json';
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
 const INITIAL_LIST_SIZE = 60;
@@ -7,9 +7,13 @@ const LIST_STEP = 60;
 
 const state = {
   casesCollection: null,
-  parcelsCollection: null,
+  parcelManifest: null,
   cases: [],
   parcelsByCase: new Map(),
+  parcelShardCache: new Map(),
+  parcelShardPromises: new Map(),
+  activeParcelShards: new Set(),
+  parcelLoadGeneration: 0,
   filter: 'all',
   query: '',
   selectedCaseId: null,
@@ -31,10 +35,17 @@ const ui = {
   loadMore: document.querySelector('#load-more'),
   listNote: document.querySelector('#list-note'),
   baseLayerButtons: [...document.querySelectorAll('[data-base-layer]')],
+  zoomHint: document.querySelector('#zoom-hint'),
+  dataRange: document.querySelector('#data-range'),
 };
 
 function formatDate(value) {
   return new Intl.DateTimeFormat('pl-PL', { day: 'numeric', month: 'short', year: 'numeric' })
+    .format(new Date(`${value}T12:00:00`));
+}
+
+function formatNumericDate(value) {
+  return new Intl.DateTimeFormat('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric' })
     .format(new Date(`${value}T12:00:00`));
 }
 
@@ -101,8 +112,8 @@ function renderCases() {
   const visible = filteredCases();
   const displayed = visible.slice(0, state.listLimit);
   ui.list.replaceChildren();
-  ui.resultCount.textContent = String(visible.length);
-  ui.heroCount.textContent = String(state.cases.length);
+  ui.resultCount.textContent = visible.length.toLocaleString('pl-PL');
+  ui.heroCount.textContent = state.cases.length.toLocaleString('pl-PL');
   ui.empty.hidden = visible.length !== 0;
   ui.loadMore.hidden = displayed.length >= visible.length;
   ui.listNote.textContent = visible.length > displayed.length
@@ -126,9 +137,9 @@ function renderCases() {
     fragment.querySelector('.case-status').textContent = item.status;
     fragment.querySelector('.detail-id').textContent = item.case_id;
     fragment.querySelector('.detail-parcels').textContent = item.parcel_ids.join(', ');
-    fragment.querySelector('.aerial-action').addEventListener('click', () => showCaseOnAerial(item.case_id));
+    fragment.querySelector('.aerial-action').addEventListener('click', () => { void showCaseOnAerial(item.case_id); });
     button.setAttribute('aria-expanded', String(item.case_id === state.selectedCaseId));
-    button.addEventListener('click', () => selectCase(item.case_id, true));
+    button.addEventListener('click', () => { void selectCase(item.case_id, true); });
     ui.list.append(fragment);
   }
 }
@@ -151,34 +162,100 @@ function setBaseLayer(layer) {
   state.map.setPaintProperty('parcels-fill', 'fill-opacity', parcelFillOpacity());
 }
 
-function showCaseOnAerial(caseId) {
-  state.selectedCaseId = caseId;
+async function showCaseOnAerial(caseId) {
   setBaseLayer('aerial');
-  updateSelectedLayer();
-  const parcelFeatures = state.parcelsByCase.get(caseId) || [];
-  const pointFeature = state.cases.find((feature) => feature.properties.case_id === caseId);
-  const bounds = boundsForFeatures(parcelFeatures.length ? parcelFeatures : [pointFeature]);
-  if (bounds && state.map) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 650 });
+  if (state.selectedCaseId !== caseId) state.selectedCaseId = caseId;
+  renderCases();
+  await focusSelectedCase(true, 70);
   document.querySelector('.map-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
 }
 
-function filteredCollections() {
-  const ids = new Set(filteredCases().map((feature) => feature.properties.case_id));
-  return {
-    cases: { ...state.casesCollection, features: state.casesCollection.features.filter((feature) => ids.has(feature.properties.case_id)) },
-    parcels: { ...state.parcelsCollection, features: state.parcelsCollection.features.filter((feature) => ids.has(feature.properties.case_id)) },
-  };
+function emptyFeatureCollection() {
+  return { type: 'FeatureCollection', features: [] };
+}
+
+function filteredCaseIds() {
+  return new Set(filteredCases().map((feature) => feature.properties.case_id));
+}
+
+function refreshParcelSource() {
+  if (!state.map?.getSource('parcels')) return;
+  const visibleIds = filteredCaseIds();
+  const features = [...state.activeParcelShards]
+    .flatMap((shardId) => state.parcelShardCache.get(shardId)?.features || [])
+    .filter((feature) => visibleIds.has(feature.properties.case_id));
+  state.parcelsByCase = new Map();
+  for (const feature of features) {
+    const caseId = feature.properties.case_id;
+    if (!state.parcelsByCase.has(caseId)) state.parcelsByCase.set(caseId, []);
+    state.parcelsByCase.get(caseId).push(feature);
+  }
+  state.map.getSource('parcels').setData({ type: 'FeatureCollection', features });
+  updateSelectedLayer();
+}
+
+async function loadParcelShard(shardId) {
+  if (!shardId || state.parcelShardCache.has(shardId)) return;
+  if (!state.parcelShardPromises.has(shardId)) {
+    const info = state.parcelManifest.shards[shardId];
+    if (!info) return;
+    const request = fetch(info.url)
+      .then((response) => {
+        if (!response.ok) throw new Error(`Parcel shard ${shardId} failed`);
+        return response.json();
+      })
+      .then((collection) => state.parcelShardCache.set(shardId, collection))
+      .finally(() => state.parcelShardPromises.delete(shardId));
+    state.parcelShardPromises.set(shardId, request);
+  }
+  await state.parcelShardPromises.get(shardId);
+}
+
+function intersectsMapBounds(shardBounds, mapBounds) {
+  const [west, south, east, north] = shardBounds;
+  return east >= mapBounds.getWest() && west <= mapBounds.getEast()
+    && north >= mapBounds.getSouth() && south <= mapBounds.getNorth();
+}
+
+async function loadParcelShardsForView() {
+  if (!state.map?.getSource('parcels') || !state.parcelManifest) return;
+  const generation = ++state.parcelLoadGeneration;
+  if (state.map.getZoom() < 11.5) {
+    state.activeParcelShards.clear();
+    refreshParcelSource();
+    ui.zoomHint.textContent = 'Przybliż mapę, aby zobaczyć granice działek';
+    return;
+  }
+  const mapBounds = state.map.getBounds();
+  const shardIds = Object.entries(state.parcelManifest.shards)
+    .filter(([, info]) => intersectsMapBounds(info.bounds, mapBounds))
+    .map(([shardId]) => shardId);
+  const selected = state.cases.find((feature) => feature.properties.case_id === state.selectedCaseId);
+  if (selected?.properties.parcel_shard && !shardIds.includes(selected.properties.parcel_shard)) {
+    shardIds.push(selected.properties.parcel_shard);
+  }
+  ui.zoomHint.textContent = 'Ładowanie granic działek…';
+  try {
+    await Promise.all(shardIds.map(loadParcelShard));
+  } catch {
+    if (generation === state.parcelLoadGeneration) ui.zoomHint.textContent = 'Nie udało się pobrać granic działek';
+    return;
+  }
+  if (generation !== state.parcelLoadGeneration) return;
+  state.activeParcelShards = new Set(shardIds);
+  refreshParcelSource();
+  ui.zoomHint.textContent = shardIds.length ? 'Granice działek są widoczne na mapie' : 'Brak spraw w tym obszarze';
 }
 
 function updateMapData() {
   if (!state.map?.getSource('cases')) return;
-  const collections = filteredCollections();
-  state.map.getSource('cases').setData(collections.cases);
-  state.map.getSource('parcels').setData(collections.parcels);
-  if (state.selectedCaseId && !collections.cases.features.some((feature) => feature.properties.case_id === state.selectedCaseId)) {
+  const ids = filteredCaseIds();
+  const cases = { ...state.casesCollection, features: state.casesCollection.features.filter((feature) => ids.has(feature.properties.case_id)) };
+  state.map.getSource('cases').setData(cases);
+  if (state.selectedCaseId && !cases.features.some((feature) => feature.properties.case_id === state.selectedCaseId)) {
     state.selectedCaseId = null;
   }
-  updateSelectedLayer();
+  refreshParcelSource();
 }
 
 function updateSelectedLayer() {
@@ -189,18 +266,34 @@ function updateSelectedLayer() {
   );
 }
 
-function selectCase(caseId, moveMap = false) {
+async function focusSelectedCase(moveMap, padding = 90) {
+  const pointFeature = state.cases.find((feature) => feature.properties.case_id === state.selectedCaseId);
+  if (!pointFeature) return;
+  const shardId = pointFeature.properties.parcel_shard;
+  ui.zoomHint.textContent = 'Ładowanie wybranej działki…';
+  try {
+    await loadParcelShard(shardId);
+  } catch {
+    ui.zoomHint.textContent = 'Nie udało się pobrać granicy działki';
+    return;
+  }
+  state.activeParcelShards.add(shardId);
+  refreshParcelSource();
+  const parcelFeatures = state.parcelsByCase.get(state.selectedCaseId) || [];
+  if (moveMap && state.map) {
+    const bounds = boundsForFeatures(parcelFeatures.length ? parcelFeatures : [pointFeature]);
+    if (bounds) state.map.fitBounds(bounds, { padding, maxZoom: 17, duration: 700 });
+  }
+  ui.zoomHint.textContent = 'Wybrana działka jest zaznaczona na mapie';
+  updateSelectedLayer();
+}
+
+async function selectCase(caseId, moveMap = false) {
   state.selectedCaseId = state.selectedCaseId === caseId ? null : caseId;
   renderCases();
   updateSelectedLayer();
   if (!state.selectedCaseId) return;
-
-  const parcelFeatures = state.parcelsByCase.get(state.selectedCaseId) || [];
-  const pointFeature = state.cases.find((feature) => feature.properties.case_id === state.selectedCaseId);
-  if (moveMap && state.map) {
-    const bounds = boundsForFeatures(parcelFeatures.length ? parcelFeatures : [pointFeature]);
-    if (bounds) state.map.fitBounds(bounds, { padding: 90, maxZoom: 16.5, duration: 700 });
-  }
+  await focusSelectedCase(moveMap);
   requestAnimationFrame(() => {
     document.querySelector(`[data-case-id="${CSS.escape(state.selectedCaseId)}"]`)
       ?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -249,10 +342,10 @@ function addMapLayers() {
     type: 'geojson',
     data: state.casesCollection,
     cluster: true,
-    clusterMaxZoom: 13,
+    clusterMaxZoom: 12,
     clusterRadius: 46,
   });
-  state.map.addSource('parcels', { type: 'geojson', data: state.parcelsCollection });
+  state.map.addSource('parcels', { type: 'geojson', data: emptyFeatureCollection() });
 
   state.map.addLayer({
     id: 'clusters',
@@ -325,9 +418,9 @@ function initMap() {
   state.map = new maplibregl.Map({
     container: 'map',
     style: MAP_STYLE,
-    center: [16.925, 52.405],
-    zoom: 10.7,
-    minZoom: 9,
+    center: [16.7, 52.15],
+    zoom: 7.1,
+    minZoom: 6,
     maxZoom: 19,
     attributionControl: true,
   });
@@ -337,9 +430,10 @@ function initMap() {
     addMapLayers();
     setBaseLayer(state.baseLayer);
     const bounds = boundsForFeatures(state.casesCollection.features);
-    if (bounds) state.map.fitBounds(bounds, { padding: 50, maxZoom: 11.4, duration: 0 });
+    if (bounds) state.map.fitBounds(bounds, { padding: 45, maxZoom: 7.8, duration: 0 });
     ui.loading.classList.add('is-hidden');
   });
+  state.map.on('moveend', () => { void loadParcelShardsForView(); });
 
   state.map.on('click', 'clusters', async (event) => {
     const feature = state.map.queryRenderedFeatures(event.point, { layers: ['clusters'] })[0];
@@ -350,13 +444,13 @@ function initMap() {
   state.map.on('click', 'case-points', (event) => {
     const feature = event.features?.[0];
     if (!feature) return;
-    selectCase(feature.properties.case_id);
+    void selectCase(feature.properties.case_id);
     popupForCase(feature.properties.case_id, event.lngLat);
   });
   state.map.on('click', 'parcels-fill', (event) => {
     const feature = event.features?.[0];
     if (!feature) return;
-    selectCase(feature.properties.case_id);
+    void selectCase(feature.properties.case_id);
     popupForCase(feature.properties.case_id, event.lngLat);
   });
   for (const layer of ['clusters', 'case-points', 'parcels-fill']) {
@@ -364,6 +458,7 @@ function initMap() {
     state.map.on('mouseleave', layer, () => { state.map.getCanvas().style.cursor = ''; });
   }
   state.map.on('error', (event) => {
+    if (event.sourceId === 'ortho') return;
     if (!state.map.loaded()) {
       ui.loading.classList.add('is-error');
       ui.loading.querySelector('p').textContent = 'Nie udało się załadować mapy bazowej.';
@@ -374,17 +469,16 @@ function initMap() {
 
 async function start() {
   try {
-    const [casesResponse, parcelsResponse] = await Promise.all([fetch(CASES_URL), fetch(PARCELS_URL)]);
-    if (!casesResponse.ok || !parcelsResponse.ok) throw new Error('Data request failed');
+    const [casesResponse, manifestResponse] = await Promise.all([fetch(CASES_URL), fetch(PARCEL_MANIFEST_URL)]);
+    if (!casesResponse.ok || !manifestResponse.ok) throw new Error('Data request failed');
     state.casesCollection = await casesResponse.json();
-    state.parcelsCollection = await parcelsResponse.json();
+    state.parcelManifest = await manifestResponse.json();
+    if (state.casesCollection.analysis_period) {
+      const { start: periodStart, end: periodEnd } = state.casesCollection.analysis_period;
+      ui.dataRange.lastChild.textContent = `Dane: ${formatNumericDate(periodStart)}–${formatNumericDate(periodEnd)}`;
+    }
     state.cases = [...state.casesCollection.features]
       .sort((a, b) => b.properties.received_date.localeCompare(a.properties.received_date));
-    for (const feature of state.parcelsCollection.features) {
-      const caseId = feature.properties.case_id;
-      if (!state.parcelsByCase.has(caseId)) state.parcelsByCase.set(caseId, []);
-      state.parcelsByCase.get(caseId).push(feature);
-    }
     renderCases();
     initMap();
   } catch (error) {

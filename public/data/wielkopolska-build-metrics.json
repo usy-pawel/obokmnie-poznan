@@ -1,0 +1,30 @@
+{
+  "generated_at": "2026-08-29",
+  "analysis_period": {
+    "start": "2025-08-24",
+    "end": "2026-08-24"
+  },
+  "source_rows_in_period": 39591,
+  "source_rows_by_type_in_period": {
+    "wniosek_decyzja": 26986,
+    "zgloszenie": 12605
+  },
+  "unique_cases": 19272,
+  "published_cases": 14980,
+  "unpublished_cases_without_exact_geometry": 4292,
+  "parcel_ids_requested": 35907,
+  "parcel_ids_resolved": 27342,
+  "parcel_ids_failed": 8560,
+  "parcel_ids_outside_control": 5,
+  "parcel_geometries_published": 29503,
+  "parcel_shards": 85,
+  "largest_shard_bytes": 2390581,
+  "case_geojson_bytes": 10795497,
+  "manifest_bytes": 15924,
+  "source_type_counts": {
+    "zgloszenie": 2181,
+    "wniosek_decyzja": 12799
+  },
+  "elapsed_seconds": 34.35,
+  "max_workers": 12
+}

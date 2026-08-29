@@ -6,24 +6,24 @@
     <meta name="theme-color" content="#f5f1e9" />
     <meta
       name="description"
-      content="Zobacz potwierdzone sprawy budowlane z całego Poznania na interaktywnej mapie działek."
+      content="Zobacz potwierdzone sprawy budowlane z całej Wielkopolski na interaktywnej mapie działek."
     />
-    <title>Co budują w Poznaniu?</title>
+    <title>Co budują w Wielkopolsce?</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=poznan-4" />
+    <link rel="stylesheet" href="/styles.css?v=wielkopolska-1" />
   </head>
   <body>
     <div class="page-shell">
       <header class="site-header">
-        <a class="brand" href="/" aria-label="Co budują w Poznaniu — strona główna">
+        <a class="brand" href="/" aria-label="Co budują w Wielkopolsce — strona główna">
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span>obok<span>mnie</span></span>
         </a>
         <div class="location-chip">
           <span class="location-dot" aria-hidden="true"></span>
-          Poznań
+          Wielkopolska
         </div>
       </header>
 
@@ -31,7 +31,7 @@
         <section class="hero" aria-labelledby="page-title">
           <div class="hero-copy">
             <p class="eyebrow">Publiczne dane, po ludzku</p>
-            <h1 id="page-title">Co budują<br /><em>w Poznaniu?</em></h1>
+            <h1 id="page-title">Co budują<br /><em>w Wielkopolsce?</em></h1>
             <p class="hero-lead">
               Sprawdź sprawy budowlane z ostatnich 12 miesięcy. Przybliż mapę, aby zobaczyć
               dokładne granice działek, albo wyszukaj ulicę, inwestycję czy numer sprawy.
@@ -54,33 +54,33 @@
             <button class="filter-button" type="button" data-filter="wniosek_decyzja">Pozwolenia</button>
             <button class="filter-button" type="button" data-filter="zgloszenie">Zgłoszenia</button>
           </div>
-          <p class="toolbar-note"><span></span>Dane: 27.08.2025–27.08.2026</p>
+          <p class="toolbar-note" id="data-range"><span></span>Dane: ostatnie 12 miesięcy</p>
         </section>
 
         <section class="explorer" aria-label="Mapa i lista spraw">
           <div class="map-card">
-            <div id="map" aria-label="Interaktywna mapa spraw budowlanych w Poznaniu"></div>
+            <div id="map" aria-label="Interaktywna mapa spraw budowlanych w Wielkopolsce"></div>
             <div class="base-layer-switch" role="group" aria-label="Podkład mapy">
               <button type="button" data-base-layer="streets" aria-pressed="false">Mapa</button>
               <button class="is-active" type="button" data-base-layer="aerial" aria-pressed="true">Zdjęcie</button>
             </div>
             <div class="map-loading" id="map-loading">
               <span class="loader"></span>
-              <p>Ładowanie mapy Poznania…</p>
+              <p>Ładowanie mapy Wielkopolski…</p>
             </div>
             <div class="map-legend" aria-label="Legenda mapy">
               <span><i class="legend-cluster"></i>Grupa spraw</span>
               <span><i class="legend-permit"></i>Pozwolenie</span>
               <span><i class="legend-notice"></i>Zgłoszenie</span>
             </div>
-            <p class="zoom-hint">Przybliż mapę, aby zobaczyć granice działek</p>
+            <p class="zoom-hint" id="zoom-hint">Przybliż mapę, aby zobaczyć granice działek</p>
           </div>
 
           <aside class="cases-panel" aria-labelledby="cases-heading">
             <div class="cases-heading-row">
               <div>
                 <p class="eyebrow">Potwierdzone lokalizacje</p>
-                <h2 id="cases-heading">Sprawy w Poznaniu</h2>
+                <h2 id="cases-heading">Sprawy w Wielkopolsce</h2>
               </div>
               <span class="result-count" id="result-count">—</span>
             </div>
@@ -144,6 +144,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=poznan-4"></script>
+    <script type="module" src="/app.js?v=wielkopolska-1"></script>
   </body>
 </html>

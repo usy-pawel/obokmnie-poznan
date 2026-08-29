@@ -1,13 +1,14 @@
 {
-  "name": "obokmnie-poznan-tmvp",
+  "name": "obokmnie-wielkopolska-tmvp",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Publiczny T-MVP mapy spraw budowlanych dla Poznania.",
+  "description": "Publiczny T-MVP mapy spraw budowlanych dla Wielkopolski.",
   "engines": {
     "node": ">=20"
   },
   "scripts": {
+    "build:data": "python scripts/build-wielkopolska-geojson.py",
     "test": "node --test tests/data.test.mjs",
     "check": "node --check public/app.js && npm test"
   }

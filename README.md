@@ -1,13 +1,13 @@
-# Co budują w Poznaniu? — T‑MVP
+# Co budują w Wielkopolsce? — T‑MVP
 
-Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całego Poznania. Widok miejski pokazuje klastry spraw, a przy zbliżeniu rzeczywiste granice działek pobrane z oficjalnej usługi ULDK.
+Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całego województwa wielkopolskiego. Widok regionalny pokazuje klastry spraw, a przy zbliżeniu rzeczywiste granice działek pobrane z oficjalnej usługi ULDK.
 
 ## Dane
 
-- okres: 27 sierpnia 2025 – 27 sierpnia 2026,
-- 870 unikalnych spraw źródłowych,
-- 833 dokładnie zlokalizowane sprawy publikowane na mapie,
-- wpisy przybliżone, sprzeczne i nierozwiązane nie są publikowane,
+- okres: 24 sierpnia 2025 – 24 sierpnia 2026,
+- 14 980 opublikowanych spraw i 29 503 powiązania spraw z geometriami działek,
+- publikowane są wyłącznie sprawy z co najmniej jedną dokładnie potwierdzoną geometrią działki,
+- geometrie są dzielone przestrzennie i pobierane dopiero po przybliżeniu mapy,
 - źródła: GUNB RWDZ, GUGiK ULDK i bezpłatna ortofotomapa WMTS, OpenStreetMap/OpenFreeMap.
 
 ## Lokalny podgląd
@@ -29,10 +29,10 @@ Kontrole obejmują składnię JavaScript, liczbę i unikalność spraw, dokładn
 ## Aktualizacja danych
 
 ```powershell
-python scripts/build-poznan-geojson.py
+python scripts/build-wielkopolska-geojson.py
 ```
 
-Skrypt pobiera granice działek z ULDK wielowątkowo, ponawia nieudane zapytania i korzysta z lokalnego cache w `.cache/`. Lokalizacji nie wybiera AI.
+Skrypt filtruje oba rejestry GUNB do Wielkopolski, grupuje powtarzające się wiersze spraw, pobiera granice działek z ULDK wielowątkowo, ponawia nieudane zapytania i korzysta z lokalnego cache w `.cache/`. Lokalizacji nie wybiera AI.
 
 ## Architektura
 
@@ -40,7 +40,7 @@ Skrypt pobiera granice działek z ULDK wielowątkowo, ponawia nieudane zapytania
 - MapLibre GL JS i OpenFreeMap Positron,
 - przełączany podkład ortofotomapy GUGiK bez klucza API i opłat za wyświetlenia,
 - osobny GeoJSON punktów spraw do klastrowania,
-- osobny GeoJSON geometrii działek widoczny przy zbliżeniu,
+- małe przestrzenne fragmenty GeoJSON działek ładowane tylko dla oglądanego obszaru,
 - statyczne wdrożenie Railway połączone z gałęzią `main` na GitHubie.
 
-Przy skali wielu miast lub całej Polski statyczne pliki powinny zostać zastąpione przez PostgreSQL/PostGIS i kafle wektorowe.
+Przy skali całej Polski statyczne fragmenty powinny zostać zastąpione przez PostgreSQL/PostGIS i kafle wektorowe.
