@@ -1,60 +1,63 @@
-# Podsumowanie wdrożenia — Wielkopolska
+# Podsumowanie wdrożenia — cała Polska
 
 - Data: 29 sierpnia 2026
 - Produkcja: https://obokmnie-poznan-production.up.railway.app
 - Repozytorium: https://github.com/usy-pawel/obokmnie-poznan
 - Railway: projekt `obokmnie-poznan`, środowisko `production`
-- Forma: statyczna strona publikowana z katalogu `public`
+- Architektura: Node.js/Express, PostgreSQL 17 + PostGIS 3.5, MapLibre GL JS
 
 ## Zakres danych
 
-- okres analizy: 24 sierpnia 2025 – 24 sierpnia 2026,
-- 39 591 rekordów źródłowych z rejestrów GUNB,
-- 19 272 unikalne sprawy źródłowe,
-- 14 980 spraw z co najmniej jedną dokładnie potwierdzoną geometrią,
-- 29 503 opublikowane powiązania spraw z geometriami działek,
-- 4 292 sprawy bez dokładnej geometrii nie są publikowane,
-- 5 geometrii poza obszarem kontrolnym zostało odrzuconych.
+- okres: 27 sierpnia 2025 – 27 sierpnia 2026,
+- 193 161 unikalnych spraw w bazie,
+- 175 385 spraw publikowanych z dokładną geometrią,
+- wszystkie 16 województw,
+- 406 495 unikalnych identyfikatorów działek w źródłach,
+- 366 010 geometrii działek w PostGIS,
+- 437 667 relacji sprawa–działka,
+- 17 776 spraw bez potwierdzonej geometrii nie jest publikowanych,
+- rzeczywisty rozmiar bazy: około 860 MB.
 
-Mapa używa 85 przestrzennych fragmentów GeoJSON. Granice działek są pobierane dopiero po przybliżeniu lub wybraniu sprawy. Największy fragment ma 2 390 581 bajtów, a plik punktów spraw 10 795 497 bajtów.
+Geometrie zostały dopasowane deterministycznie z krajowego GeoParquet EGiB.
+AI nie wybiera lokalizacji ani granic działek.
 
-## Zdjęcia lotnicze
+## Mapa i API
 
-Domyślnym podkładem jest bezpłatna ortofotomapa WMTS GUGiK. Przełącznik „Mapa / Zdjęcie” działa na desktopie i urządzeniach mobilnych, a wybrana działka jest wyróżniana na zdjęciu.
+Widok kraju pobiera lekkie klastry, a pojedyncze sprawy i granice działek są
+zwracane dopiero dla widocznego obszaru lub wyszukiwania. Dostępne są filtry,
+wyszukiwanie, szczegóły sprawy i bezpłatna ortofotomapa GUGiK.
+
+Endpointy produkcyjne:
+
+- `/health`
+- `/api/meta`
+- `/api/map`
+- `/api/search`
+- `/api/cases/:caseKey`
 
 ## Lokalne CI
 
-Polecenia:
+```powershell
+npm run check
+```
+
+Wynik: 3/3 testów Node oraz 3/3 testów Python. Przeszły także kontrole składni
+serwera, frontendu, migracji i importerów.
+
+## Test produkcyjny
 
 ```powershell
-npm install --package-lock-only --ignore-scripts
-npm run check
-git diff --check
+$env:BASE_URL='https://obokmnie-poznan-production.up.railway.app'
+npm run smoke
 ```
 
-Wynik:
+Wynik: 175 385 publikowanych spraw, 16 województw, 382 klastry kraju,
+2 240 spraw dla Poznania i poprawne szczegóły wybranej działki.
 
-```text
-audited 1 package, 0 vulnerabilities
-tests 6
-pass 6
-fail 0
-git diff --check: bez uwag
-```
+Test przeglądarkowy potwierdził wyszukiwanie Strzeszyna, otwarcie działki
+`120502_5.0010.825`, wyróżnienie jej na ortofotomapie i poprawny widok 390×844.
 
-Kontrole obejmują składnię JavaScript, skalę i unikalność spraw, typy i zakres geometrii, kompletność pól, spójność manifestu i metryk oraz limity rozmiaru plików.
+## Infrastruktura
 
-## Kontrola przeglądarkowa
-
-- pełny widok: 14 980 spraw, wyszukiwanie „Kalisz” — 16 wyników,
-- wybór wyniku ładuje właściwy fragment działek i zaznacza geometrię,
-- przełącznik ortofotomapy działa,
-- mobile 390 × 844 px: mapa i wyszukiwarka są widoczne, bez poziomego przepełnienia,
-- konsola: 0 błędów i 0 ostrzeżeń.
-
-## Czas budowy
-
-- pierwsze uzupełnienie 4 157 brakujących identyfikatorów i publikacja: 1 375,72 s,
-- przebudowanie z pełnego cache: 34,35 s.
-
-AI nie wybiera lokalizacji ani granic działek. Dopasowanie jest deterministyczne i oparte na identyfikatorach działek oraz oficjalnej usłudze ULDK.
+Aplikacja korzysta z PostGIS przez prywatną sieć Railway. Nieużywana, zapasowa
+instancja PostgreSQL została usunięta wraz z pustym wolumenem.

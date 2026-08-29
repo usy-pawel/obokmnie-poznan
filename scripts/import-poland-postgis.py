@@ -285,7 +285,7 @@ def seed_legacy_cache(database):
                       value.get("datasource"), value.get("error"), datetime.now().isoformat()))
     database.executemany("INSERT OR REPLACE INTO parcel_cache VALUES (?,?,?,?,?,?,?)", batch)
     database.commit()
-    print(f"Seeded {len(batch)} cached Wielkopolska parcels", flush=True)
+    print(f"Seeded {len(batch)} legacy cached parcels", flush=True)
 
 
 def fetch_missing_parcels(database):
