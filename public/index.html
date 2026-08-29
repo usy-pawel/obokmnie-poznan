@@ -61,8 +61,8 @@
           <div class="map-card">
             <div id="map" aria-label="Interaktywna mapa spraw budowlanych w Polsce"></div>
             <div class="base-layer-switch" role="group" aria-label="Podkład mapy">
-              <button type="button" data-base-layer="streets" aria-pressed="false">Mapa</button>
-              <button class="is-active" type="button" data-base-layer="aerial" aria-pressed="true">Zdjęcie</button>
+              <button class="is-active" type="button" data-base-layer="streets" aria-pressed="true">Mapa</button>
+              <button type="button" data-base-layer="aerial" aria-pressed="false">Zdjęcie</button>
             </div>
             <div class="map-loading" id="map-loading">
               <span class="loader"></span>
@@ -80,7 +80,7 @@
             <div class="cases-heading-row">
               <div>
                 <p class="eyebrow">Potwierdzone lokalizacje</p>
-                <h2 id="cases-heading">Sprawy w Polsce</h2>
+                <h2 id="cases-heading">Sprawy na mapie</h2>
               </div>
               <span class="result-count" id="result-count">—</span>
             </div>
@@ -144,6 +144,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-4"></script>
+    <script type="module" src="/app.js?v=polska-5"></script>
   </body>
 </html>

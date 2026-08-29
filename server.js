@@ -59,16 +59,28 @@ app.get('/api/map', async (request, response, next) => {
       })) });
     }
     const result = await pool.query(`
-      SELECT case_key, external_id, source_type, received_date, status, city, address, description,
-             voivodeship, ST_X(location) AS lng, ST_Y(location) AS lat
-      FROM cases
-      WHERE published AND location && ST_MakeEnvelope($1,$2,$3,$4,4326)
-        AND ($5::text IS NULL OR source_type=$5)
-        AND ($6::text IS NULL OR search_vector @@ plainto_tsquery('simple',$6)
-          OR city ILIKE '%'||$6||'%' OR address ILIKE '%'||$6||'%'
-          OR external_id ILIKE '%'||$6||'%' OR voivodeship ILIKE '%'||$6||'%'
-          OR description ILIKE '%'||$6||'%')
-      ORDER BY received_date DESC LIMIT 5000
+      WITH exact_city AS (
+        SELECT EXISTS (
+          SELECT 1 FROM cases city_case
+          WHERE city_case.published AND lower(city_case.city)=lower($6)
+        ) AS found
+      )
+      SELECT c.case_key, c.external_id, c.source_type, c.received_date, c.status,
+             c.city, c.address, c.description, c.voivodeship,
+             ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
+             (SELECT count(*)::int
+              FROM case_parcels cp JOIN parcels p ON p.parcel_id=cp.parcel_id
+              WHERE cp.case_id=c.id AND p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom)) AS parcel_count
+      FROM cases c CROSS JOIN exact_city
+      WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
+        AND ($5::text IS NULL OR c.source_type=$5)
+        AND ($6::text IS NULL
+          OR (exact_city.found AND lower(c.city)=lower($6))
+          OR (NOT exact_city.found AND (c.search_vector @@ plainto_tsquery('simple',$6)
+            OR c.city ILIKE '%'||$6||'%' OR c.address ILIKE '%'||$6||'%'
+            OR c.external_id ILIKE '%'||$6||'%' OR c.voivodeship ILIKE '%'||$6||'%'
+            OR c.description ILIKE '%'||$6||'%')))
+      ORDER BY c.received_date DESC LIMIT 5000
     `, params);
     response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
       type: 'Feature', id: row.case_key, geometry: { type: 'Point', coordinates: [row.lng, row.lat] }, properties: row,
@@ -81,14 +93,26 @@ app.get('/api/search', async (request, response, next) => {
     const query = String(request.query.q || '').trim();
     if (query.length < 2) return response.json([]);
     const result = await pool.query(`
-      SELECT case_key, external_id, source_type, received_date, status, city, address, description,
-             voivodeship, ST_X(location) AS lng, ST_Y(location) AS lat
-      FROM cases
-      WHERE published AND (search_vector @@ plainto_tsquery('simple',$1)
-        OR city ILIKE '%'||$1||'%' OR address ILIKE '%'||$1||'%'
-        OR external_id ILIKE '%'||$1||'%' OR voivodeship ILIKE '%'||$1||'%'
-        OR description ILIKE '%'||$1||'%')
-      ORDER BY received_date DESC LIMIT 100
+      WITH exact_city AS (
+        SELECT EXISTS (
+          SELECT 1 FROM cases city_case
+          WHERE city_case.published AND lower(city_case.city)=lower($1)
+        ) AS found
+      )
+      SELECT c.case_key, c.external_id, c.source_type, c.received_date, c.status,
+             c.city, c.address, c.description, c.voivodeship,
+             ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
+             (SELECT count(*)::int
+              FROM case_parcels cp JOIN parcels p ON p.parcel_id=cp.parcel_id
+              WHERE cp.case_id=c.id AND p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom)) AS parcel_count
+      FROM cases c CROSS JOIN exact_city
+      WHERE c.published
+        AND ((exact_city.found AND lower(c.city)=lower($1))
+          OR (NOT exact_city.found AND (c.search_vector @@ plainto_tsquery('simple',$1)
+            OR c.city ILIKE '%'||$1||'%' OR c.address ILIKE '%'||$1||'%'
+            OR c.external_id ILIKE '%'||$1||'%' OR c.voivodeship ILIKE '%'||$1||'%'
+            OR c.description ILIKE '%'||$1||'%')))
+      ORDER BY c.received_date DESC LIMIT 100
     `, [query]);
     response.json(result.rows);
   } catch (error) { next(error); }

@@ -25,10 +25,12 @@ const poznan = await get('/api/map?bbox=16.7,52.25,17.15,52.6&zoom=12');
 assert.equal(poznan.type, 'FeatureCollection');
 assert.ok(poznan.features.length > 0, 'Poznań map is empty');
 assert.ok(poznan.features.every((feature) => feature.properties.case_key));
+assert.ok(poznan.features.every((feature) => feature.properties.parcel_count > 0));
 
 const detail = await get(`/api/cases/${encodeURIComponent(poznan.features[0].properties.case_key)}`);
 assert.equal(detail.case_key, poznan.features[0].properties.case_key);
 assert.ok(Array.isArray(detail.parcels));
+assert.ok(detail.parcels.length > 0, 'selected case has no parcel geometry');
 
 console.log(JSON.stringify({
   published_cases: meta.published_cases,

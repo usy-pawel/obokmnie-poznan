@@ -402,8 +402,8 @@ def load_postgres(stage, metrics, cutoff, newest):
         parcels = stage.execute("SELECT requested_id,returned_id,geom_wkt,geometry_json,datasource,error FROM parcel_cache")
         upsert_parcel = """
           INSERT INTO parcels(parcel_id,returned_id,geom,datasource,error,updated_at)
-          VALUES(%s,%s,CASE WHEN %s::text IS NOT NULL THEN ST_Multi(ST_SetSRID(ST_GeomFromText(%s),4326))
-                            WHEN %s::text IS NOT NULL THEN ST_Multi(ST_SetSRID(ST_GeomFromGeoJSON(%s),4326)) END,
+          VALUES(%s,%s,CASE WHEN %s::text IS NOT NULL THEN ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromText(%s),4326)),3))
+                            WHEN %s::text IS NOT NULL THEN ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromGeoJSON(%s),4326)),3)) END,
                  %s,%s,now())
           ON CONFLICT(parcel_id) DO UPDATE SET returned_id=excluded.returned_id,geom=excluded.geom,
             datasource=excluded.datasource,error=excluded.error,updated_at=now()
@@ -422,11 +422,13 @@ def load_postgres(stage, metrics, cutoff, newest):
         insert_ref = """
           INSERT INTO case_parcels(case_id,parcel_id)
           SELECT c.id,%s FROM cases c JOIN parcels p ON p.parcel_id=%s
-          WHERE c.case_key=%s ON CONFLICT DO NOTHING
+          WHERE c.case_key=%s AND left(%s,2)=voivodeship_teryt_code(c.voivodeship)
+          ON CONFLICT DO NOTHING
         """
         loaded_refs = 0
         for batch in chunks(refs):
-            values = [(parcel_id, parcel_id, f"{source_type}:{external_id}") for source_type, external_id, parcel_id in batch]
+            values = [(parcel_id, parcel_id, f"{source_type}:{external_id}", parcel_id)
+                      for source_type, external_id, parcel_id in batch]
             cursor.executemany(insert_ref, values)
             connection.commit()
             loaded_refs += len(values)
@@ -436,8 +438,12 @@ def load_postgres(stage, metrics, cutoff, newest):
           UPDATE cases c SET location=s.location,published=true
           FROM (
             SELECT cp.case_id, ST_PointOnSurface(ST_Collect(p.geom)) AS location
-            FROM case_parcels cp JOIN parcels p ON p.parcel_id=cp.parcel_id
-            WHERE p.geom IS NOT NULL AND ST_Within(ST_Centroid(p.geom),ST_MakeEnvelope(14.0,48.8,24.3,55.3,4326))
+            FROM case_parcels cp
+            JOIN parcels p ON p.parcel_id=cp.parcel_id
+            JOIN cases source_case ON source_case.id=cp.case_id
+            WHERE p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom) AND ST_IsValid(p.geom)
+              AND left(cp.parcel_id,2)=voivodeship_teryt_code(source_case.voivodeship)
+              AND ST_Within(ST_Centroid(p.geom),ST_MakeEnvelope(14.0,48.8,24.3,55.3,4326))
             GROUP BY cp.case_id
           ) s WHERE c.id=s.case_id
         """)

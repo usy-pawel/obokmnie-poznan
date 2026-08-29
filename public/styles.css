@@ -426,6 +426,11 @@ button { color: inherit; }
   cursor: pointer;
 }
 
+.case-card-button:focus-visible {
+  outline: 3px solid rgba(243, 184, 65, 0.55);
+  outline-offset: -3px;
+}
+
 .case-topline, .case-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 
 .case-type {

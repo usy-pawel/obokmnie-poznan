@@ -1,6 +1,5 @@
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
-const POLAND_BOUNDS = [14.0, 48.8, 24.3, 55.3];
 const LIST_SIZE = 80;
 
 const state = {
@@ -11,7 +10,8 @@ const state = {
   selectedCaseKey: null,
   selectedDetail: null,
   listLimit: LIST_SIZE,
-  baseLayer: 'aerial',
+  baseLayer: 'streets',
+  lastFittedQuery: '',
   requestController: null,
   requestTimer: null,
 };
@@ -92,7 +92,9 @@ function boundsForFeatures(features) {
 
 function renderCases() {
   const cases = state.features.filter((feature) => !feature.properties.cluster);
-  const displayed = cases.slice(0, state.listLimit);
+  const selected = cases.find((feature) => caseKey(feature.properties) === state.selectedCaseKey);
+  const ordered = selected ? [selected, ...cases.filter((feature) => feature !== selected)] : cases;
+  const displayed = ordered.slice(0, state.listLimit);
   ui.list.replaceChildren();
   ui.resultCount.textContent = cases.length.toLocaleString('pl-PL');
   ui.empty.hidden = cases.length !== 0;
@@ -101,7 +103,7 @@ function renderCases() {
   if (state.map?.getZoom() < 10 && !state.query) {
     ui.listNote.textContent = 'Przybliż mapę lub wyszukaj miejsce, aby zobaczyć pojedyncze sprawy.';
   } else if (state.query) {
-    ui.listNote.textContent = `Wyniki dla: „${state.query}”.`;
+    ui.listNote.textContent = `Sprawy widoczne na mapie dla: „${state.query}”.`;
   } else {
     ui.listNote.textContent = 'Najnowsze sprawy w widocznym obszarze mapy.';
   }
@@ -125,12 +127,17 @@ function renderCases() {
     fragment.querySelector('.case-address').textContent = item.address || item.city || item.voivodeship;
     fragment.querySelector('.case-status').textContent = item.status || 'brak statusu';
     fragment.querySelector('.detail-id').textContent = item.external_id || key;
+    const resolvedParcelIds = detail?.parcels?.map((parcel) => parcel.parcel_id).filter(Boolean) || [];
     fragment.querySelector('.detail-parcels').textContent = detail
-      ? (detail.parcel_ids || []).join(', ') || 'brak numeru'
+      ? resolvedParcelIds.join(', ') || (detail.parcel_ids || []).join(', ') || 'brak danych działki'
       : 'ładowanie…';
-    fragment.querySelector('.aerial-action').addEventListener('click', () => { void selectCase(key, true); });
+    const aerialAction = fragment.querySelector('.aerial-action');
+    aerialAction.hidden = Boolean(detail && !resolvedParcelIds.length);
+    aerialAction.addEventListener('click', () => {
+      void selectCase(key, { moveMap: true, showAerial: true, scrollToCard: true, toggle: false });
+    });
     button.setAttribute('aria-expanded', String(selected));
-    button.addEventListener('click', () => { void selectCase(key, true); });
+    button.addEventListener('click', () => { void selectCase(key, { moveMap: true }); });
     ui.list.append(fragment);
   }
 }
@@ -148,13 +155,28 @@ function setBaseLayer(layer) {
 }
 
 function setMapFeatures(collection) {
-  state.features = collection.features || [];
-  state.map?.getSource('cases')?.setData(collection);
+  state.features = (collection.features || []).filter((feature) => (
+    feature.properties?.cluster || Number(feature.properties?.parcel_count || 0) > 0
+  ));
+  if (state.selectedCaseKey && !state.features.some((feature) => (
+    !feature.properties.cluster && caseKey(feature.properties) === state.selectedCaseKey
+  ))) {
+    state.selectedCaseKey = null;
+    state.selectedDetail = null;
+    state.map?.getSource('selected-parcels')?.setData(emptyCollection());
+  }
+  const safeCollection = { type: 'FeatureCollection', features: state.features };
+  state.map?.getSource('cases')?.setData(safeCollection);
   renderCases();
+  if (state.query && state.lastFittedQuery !== state.query) {
+    state.lastFittedQuery = state.query;
+    const points = state.features.filter((feature) => !feature.properties.cluster);
+    const bounds = boundsForFeatures(points);
+    if (bounds) state.map.fitBounds(bounds, { padding: 70, maxZoom: 13, duration: 700 });
+  }
 }
 
 function currentBbox() {
-  if (state.query) return POLAND_BOUNDS.join(',');
   const bounds = state.map.getBounds();
   return [bounds.getWest(), bounds.getSouth(), bounds.getEast(), bounds.getNorth()].join(',');
 }
@@ -189,12 +211,32 @@ function scheduleMapData(delay = 180) {
   state.requestTimer = window.setTimeout(() => { void loadMapData(); }, delay);
 }
 
-async function selectCase(key, moveMap = false) {
-  if (state.selectedCaseKey === key && state.selectedDetail) {
+function scrollSelectedCard() {
+  window.requestAnimationFrame(() => {
+    const card = [...document.querySelectorAll('.case-card')]
+      .find((element) => element.dataset.caseId === state.selectedCaseKey);
+    card?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    card?.querySelector('.case-card-button')?.focus({ preventScroll: true });
+  });
+}
+
+async function selectCase(key, options = {}) {
+  const { moveMap = false, showAerial = false, scrollToCard = false, toggle = true } = options;
+  if (state.selectedCaseKey === key && state.selectedDetail && toggle) {
     state.selectedCaseKey = null;
     state.selectedDetail = null;
     state.map.getSource('selected-parcels')?.setData(emptyCollection());
     renderCases();
+    return;
+  }
+  if (state.selectedCaseKey === key && state.selectedDetail) {
+    if (showAerial) setBaseLayer('aerial');
+    if (moveMap) {
+      const features = parcelFeatures(state.selectedDetail);
+      const bounds = boundsForFeatures(features);
+      if (bounds) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 800 });
+    }
+    if (scrollToCard) scrollSelectedCard();
     return;
   }
   state.selectedCaseKey = key;
@@ -205,16 +247,21 @@ async function selectCase(key, moveMap = false) {
     if (!response.ok) throw new Error(`API ${response.status}`);
     state.selectedDetail = await response.json();
     const features = parcelFeatures(state.selectedDetail);
+    if (!features.length) throw new Error('Brak geometrii działki');
     state.map.getSource('selected-parcels')?.setData({ type: 'FeatureCollection', features });
     renderCases();
     if (moveMap) {
-      setBaseLayer('aerial');
+      if (showAerial) setBaseLayer('aerial');
       const bounds = boundsForFeatures(features);
       if (bounds) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 800 });
       else if (state.selectedDetail.location) state.map.flyTo({ center: state.selectedDetail.location.coordinates, zoom: 16 });
-      document.querySelector('.map-card')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
     }
+    if (scrollToCard) scrollSelectedCard();
   } catch {
+    state.selectedCaseKey = null;
+    state.selectedDetail = null;
+    state.map.getSource('selected-parcels')?.setData(emptyCollection());
+    renderCases();
     ui.listNote.textContent = 'Nie udało się pobrać szczegółów tej sprawy.';
   }
 }
@@ -265,7 +312,11 @@ function initializeMap() {
     state.map.addLayer({ id: 'selected-line', type: 'line', source: 'selected-parcels', paint: { 'line-color': '#152c2a', 'line-width': 3 } });
     setBaseLayer(state.baseLayer);
     state.map.on('click', 'case-clusters', (event) => state.map.easeTo({ center: event.features[0].geometry.coordinates, zoom: Math.min(state.map.getZoom() + 2, 12) }));
-    state.map.on('click', 'case-points', (event) => { void selectCase(caseKey(event.features[0].properties), true); });
+    state.map.on('click', 'case-points', (event) => {
+      void selectCase(caseKey(event.features[0].properties), {
+        moveMap: true, scrollToCard: true, toggle: false,
+      });
+    });
     for (const layer of ['case-clusters', 'case-points']) {
       state.map.on('mouseenter', layer, () => { state.map.getCanvas().style.cursor = 'pointer'; });
       state.map.on('mouseleave', layer, () => { state.map.getCanvas().style.cursor = ''; });
@@ -292,6 +343,7 @@ ui.filters.forEach((button) => button.addEventListener('click', () => {
 
 ui.search.addEventListener('input', () => {
   state.query = ui.search.value.trim();
+  if (!state.query) state.lastFittedQuery = '';
   state.listLimit = LIST_SIZE;
   scheduleMapData(320);
 });
