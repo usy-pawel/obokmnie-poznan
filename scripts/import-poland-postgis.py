@@ -592,12 +592,14 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
             FROM case_parcels cp
             JOIN parcels p ON p.parcel_id=cp.parcel_id
             JOIN cases source_case ON source_case.id=cp.case_id
-            WHERE p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom) AND ST_IsValid(p.geom)
+            WHERE source_case.source_active
+              AND source_case.received_date BETWEEN %s AND %s
+              AND p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom) AND ST_IsValid(p.geom)
               AND left(cp.parcel_id,2)=voivodeship_teryt_code(source_case.voivodeship)
               AND ST_Within(ST_Centroid(p.geom),ST_MakeEnvelope(14.0,48.8,24.3,55.3,4326))
             GROUP BY cp.case_id
           ) s WHERE c.id=s.case_id AND c.source_active
-        """)
+        """, (cutoff, newest))
         cursor.execute("ANALYZE cases")
         cursor.execute("ANALYZE parcels")
         cursor.execute("""
