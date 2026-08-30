@@ -348,8 +348,8 @@ test('migration keeps exactly three tables, Newton statuses, strict JSON and Not
   assert.match(migration, /events_for_non_success_import' AND severity='P0'/);
 });
 
-test('module exports exactly four operations and every transaction sets local timeouts', async () => {
-  assert.deepEqual(Object.keys(controlPlane).sort(), ['acquire', 'completeHealthSweep', 'failRun', 'heartbeat']);
+test('module exports the bounded control operations and every transaction sets local timeouts', async () => {
+  assert.deepEqual(Object.keys(controlPlane).sort(), ['acquire', 'completeHealthSweep', 'failRun', 'heartbeat', 'watchdog']);
   const pool = new FakeControlPool();
   await controlPlane.acquire(pool, 'timeouts', HASH_A, 'engineer-a');
   assert.deepEqual(pool.localSettings, [
@@ -369,6 +369,19 @@ test('concurrent acquire returns one immutable handle and busy leaks no identity
   assert.deepEqual(Object.keys(acquired.handle).sort(), ['context_hash', 'fence', 'owner', 'run_id']);
   assert.equal(acquired.actions_disabled, true);
   assert.deepEqual(busy, { status: 'busy', code: 'lease_busy' });
+});
+
+test('same invocation can be recovered only by the same executor process', async () => {
+  const pool = new FakeControlPool();
+  const acquired = await controlPlane.acquire(pool, 'same-invocation', HASH_A, 'process-a');
+  const recovered = await controlPlane.acquire(pool, 'same-invocation', HASH_A, 'process-a');
+  const duplicate = await controlPlane.acquire(pool, 'same-invocation', HASH_A, 'process-b');
+  const changedContextDuplicate = await controlPlane.acquire(
+    pool, 'same-invocation', HASH_B, 'process-c',
+  );
+  assert.deepEqual(recovered.handle, acquired.handle);
+  assert.deepEqual(duplicate, { status: 'busy', code: 'lease_busy' });
+  assert.deepEqual(changedContextDuplicate, { status: 'busy', code: 'lease_busy' });
 });
 
 test('full handle identity rejects a correct fence with wrong run, owner or context', async () => {
@@ -403,7 +416,7 @@ test('handle validation rejects PostgreSQL bigint overflow before opening a tran
 test('acquire detects idempotency conflict and recovers a receipt after COMMIT response loss', async () => {
   const pool = new FakeControlPool();
   const acquired = await controlPlane.acquire(pool, 'lost-response', HASH_A, 'engineer-a');
-  const activeRetry = await controlPlane.acquire(pool, 'lost-response', HASH_A, 'engineer-b');
+  const activeRetry = await controlPlane.acquire(pool, 'lost-response', HASH_A, 'engineer-a');
   assert.equal(activeRetry.status, 'acquired');
   assert.equal(activeRetry.handle.owner, 'engineer-a');
   await assert.rejects(
@@ -418,6 +431,10 @@ test('acquire detects idempotency conflict and recovers a receipt after COMMIT r
   const recovered = await controlPlane.acquire(pool, 'lost-response', HASH_A, 'engineer-b');
   assert.equal(recovered.status, 'succeeded');
   assert.equal(recovered.receipt.code, 'health_sweep_succeeded');
+  await assert.rejects(
+    controlPlane.acquire(pool, 'lost-response', HASH_B, 'engineer-c'),
+    (error) => error.code === 'idempotency_conflict',
+  );
 });
 
 test('expired contact atomically materializes timed_out and a new acquire increments fence', async () => {
@@ -431,6 +448,29 @@ test('expired contact atomically materializes timed_out and a new acquire increm
   const second = await controlPlane.acquire(pool, 'takeover', HASH_B, 'engineer-b');
   assert.equal(BigInt(second.handle.fence), BigInt(first.handle.fence) + 1n);
   await assert.rejects(controlPlane.heartbeat(pool, first.handle), (error) => error.code === 'stale_fence');
+});
+
+test('watchdog is a no-op for idle or live leases and materializes one expired run once', async () => {
+  const pool = new FakeControlPool();
+  assert.deepEqual(await controlPlane.watchdog(pool), {
+    status: 'idle', code: null, observed_at: pool.now.toISOString(), effects_performed: false,
+  });
+  const acquired = await controlPlane.acquire(pool, 'watchdog-expiry', HASH_A, 'engineer-a');
+  assert.deepEqual(await controlPlane.watchdog(pool), {
+    status: 'active', code: 'lease_active',
+    observed_at: pool.now.toISOString(), effects_performed: false,
+  });
+  pool.advance(21);
+  const results = await Promise.all([
+    controlPlane.watchdog(pool),
+    controlPlane.watchdog(pool),
+  ]);
+  assert.equal(results.filter((result) => result.status === 'timed_out').length, 1);
+  assert.equal(results.filter((result) => result.status === 'idle').length, 1);
+  assert.equal(pool.runs.length, 1);
+  assert.equal(pool.runs[0].status, 'timed_out');
+  assert.equal(pool.lease.run_id, null);
+  await assert.rejects(controlPlane.heartbeat(pool, acquired.handle), (error) => error.code === 'stale_fence');
 });
 
 test('heartbeat caps the lease at 50 minutes and reaps contact at the deadline', async () => {
@@ -467,6 +507,23 @@ test('complete requires exactly one global observation per capability with null 
     );
   }
   assert.equal(pool.runs[0].status, 'running');
+});
+
+test('complete rechecks the kill switch under the final row lock before issue mutations', async () => {
+  const pool = new FakeControlPool();
+  const acquired = await controlPlane.acquire(pool, 'kill-switch-final', HASH_A, 'engineer-a');
+  pool.lease.actions_disabled = false;
+  const result = await controlPlane.completeHealthSweep(pool, acquired.handle, fourObservations({
+    data_coverage: {
+      capability: 'data_coverage', health: 'unhealthy', code: 'invalid_data_coverage',
+      stable_dimensions: {}, safe_context: { voivodeships: 15, published_cases: 100 },
+    },
+  }));
+  assert.equal(result.status, 'failed');
+  assert.equal(result.code, 'control_plane_failed');
+  assert.equal(pool.issues.size, 0);
+  assert.equal(pool.runs[0].status, 'failed');
+  assert.equal(pool.lease.run_id, null);
 });
 
 test('safe context rejects invalid per-key types without leaking raw TypeError', async () => {

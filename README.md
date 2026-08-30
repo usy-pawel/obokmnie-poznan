@@ -48,6 +48,26 @@ npm run maintenance:preflight -- --base-url http://localhost:3000 --allow-localh
 Paper preflight ma wersję `radar_maintenance_paper_v1`, czyta wyłącznie publiczne endpointy
 i nie zapisuje niczego w PostgreSQL.
 
+Prywatny, deterministyczny paper supervisor korzysta z PostGIS i nie wykonuje
+napraw produkcyjnych. Tick zawsze uruchamia watchdog, a pełny sweep tylko w
+ustalonej godzinie UTC:
+
+```powershell
+$env:MAINTENANCE_SUPERVISOR_MODE='paper'
+$env:MAINTENANCE_SWEEP_HOUR_UTC='6'
+$env:MAINTENANCE_BASE_COMMIT=(git rev-parse HEAD)
+$env:ALLOW_LOCAL_MAINTENANCE_RUNNER='1'
+npm run maintenance:supervisor-tick
+```
+
+Jednorazowe wymuszenie lokalnego/manualnego smoke wymaga dodatkowo pary
+`MAINTENANCE_FORCE_SWEEP=1` i `MAINTENANCE_FORCE_CONFIRM=paper_manual_once`.
+Nie zapisuje się ich jako stałych zmiennych serwisu.
+
+Zweryfikowany wynik pracy agenta można zapisać atomowo poleceniem
+`npm run maintenance:paper-receipt -- material.json`. Ten sam klucz i materiał
+odzyskują istniejący receipt; konflikt materiału nie nadpisuje pliku.
+
 Agregatową weryfikację najnowszego udanego importu i eventów Radaru uruchamia:
 
 ```powershell

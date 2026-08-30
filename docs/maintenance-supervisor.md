@@ -14,12 +14,11 @@ Business Wisdom, rejestru ewaluacji modeli ani automatycznych publikacji.
 
 1. Naprawić fundament: lock importera, readiness bazy, świeżość danych, trwałe
    kody błędów oraz osobny `last_success` po późniejszej awarii.
-2. Dodać deterministyczny read-only health i lokalny paper receipt bez nowej
-   warstwy persistence. Obserwować rzeczywiste przebiegi i kody błędów.
-3. Dopiero po potwierdzeniu wartości dodać fingerprintowane problemy,
-   idempotentne zadania, claim, lease, heartbeat, fencing i decyzje.
-4. Dodać ograniczony prywatny preflight, transition/release i accountability.
-5. Dopiero po zatwierdzeniu Pawła aktywować cykliczną automatyzację.
+2. Dodać deterministyczny read-only health i lokalny paper receipt.
+3. Dodać fingerprintowane problemy, idempotentne przebiegi, claim, lease,
+   heartbeat, fencing, prywatny preflight i accountability.
+4. Dodać cykliczny paper supervisor i watchdog bez automatycznych napraw.
+5. Automatyczne skutki pozostawić za osobną, dokładnie związaną zgodą.
 
 ## Zarządzane zdolności
 
@@ -96,13 +95,12 @@ sekretów. Bezpieczny kontekst ma zamknięty schemat i twardy limit rozmiaru.
 - Utrata odpowiedzi po trwałym zapisie jest obsługiwana przez odczyt istniejącego
   receipt, bez powtórzenia skutku.
 
-W obecnym etapie deadline jest egzekwowany przy każdym kolejnym kontakcie z
-control plane: `acquire`, `heartbeat`, zakończenie lub porażka materializują
-`timed_out` atomowo. Jeżeli proces zniknie i nikt więcej nie wykona operacji,
-rekord może pozostać fizycznie `running` po deadline, choć lease jest już
-logicznie nieważny. Cykliczny watchdog materializujący takie timeouty należy do
-etapu Supervisora; do jego wdrożenia nie raportujemy gwarancji fizycznego
-zakończenia rekordu w 50. minucie.
+Deadline jest egzekwowany przy każdym kontakcie z control plane. Dodatkowo
+paper supervisor uruchamia watchdog przy każdym pięciominutowym ticku. Watchdog
+pod tym samym advisory lockiem atomowo materializuje wygasły przebieg jako
+`timed_out`, czyści lease i nie wykonuje żadnego działania domenowego. Fizyczne
+zakończenie może nastąpić przy pierwszym udanym ticku po 50. minucie; cron nie
+gwarantuje wykonania dokładnie co do sekundy.
 
 Restore bazy wymaga zatrzymania wszystkich workerów Supervisora i potwierdzenia,
 że żaden stary proces nie działa. Po restore, jeszcze przed ich wznowieniem,
@@ -178,8 +176,9 @@ Lokalny runner `npm run maintenance:health-sweep` wymaga stabilnego
 i zamrożonego `MAINTENANCE_CONTEXT_HASH` z prywatnego preflightu. Wykonuje
 wyłącznie `acquire`, bezpośredni odczyt health oraz
 `completeHealthSweep` albo typowane `failRun`. Nie uruchamia importu, deployu,
-wiadomości ani innego efektu; `actions_disabled=true` nie blokuje monitoringu i
-zawsze odpowiada `effects_performed=false`. Powtórzenie terminalnego klucza
+wiadomości ani innego efektu. Monitoring działa wyłącznie, gdy kanoniczny kill
+switch ma `actions_disabled=true`; inna wartość kończy przebieg bez sweepu.
+Runner zawsze odpowiada `effects_performed=false`. Powtórzenie terminalnego klucza
 odzyskuje istniejący receipt bez ponownego sweepu.
 
 Wynik rozdziela `execution_ok` od `health_ok`. Terminalny receipt z
@@ -198,7 +197,7 @@ Zgoda jest jednorazowa i związana z `contextHash`, dokładnym commitem albo
 migracją oraz środowiskiem. Ma termin ważności i `consumed_at`; nie może zostać
 ponownie użyta dla innego materiału ani drugiego skutku.
 
-## Paper-mode
+## Paper-mode i harmonogram
 
 Przed aktywacją Supervisor może tylko:
 
@@ -208,10 +207,54 @@ Przed aktywacją Supervisor może tylko:
 - uruchomić lokalne testy i reviewerów,
 - zapisać receipt oraz propozycję następnego kroku.
 
-Pierwszy paper-mode jest read-only i nie wymaga nowych tabel. Receipt pozostaje
-lokalnym artefaktem przebiegu oraz aktualizacją zadania w Notion. Trwały control
-plane powstaje dopiero po zebraniu dowodu, że paper-mode wykrywa użyteczne
-problemy bez szumu.
+Railway uruchamia prywatny proces cron co pięć minut. Każdy tick wykonuje
+watchdog. Dziennie powstaje najwyżej jedna próba podstawowa `a0` i jedna próba
+naprawcza `a1`, a najwyżej jeden z tych przebiegów może zakończyć się sukcesem.
+Logiczny slot zaczyna się w godzinie ustawionej przez
+`MAINTENANCE_SWEEP_HOUR_UTC` (domyślnie `06` UTC). Jeśli tick w tej godzinie nie
+dojdzie do skutku, pierwszy późniejszy tick tego dnia wykonuje catch-up w tym
+samym logicznym slocie. Stabilny klucz zawiera slot UTC i próbę `a0`/`a1`, a
+context hash jest osobnym niezmiennym materiałem idempotency, więc ponowienie
+nie tworzy duplikatu nawet przy równoległym odczycie slotu.
+Po terminalnej porażce następny tick może wykonać dokładnie jedną próbę `a1`;
+nie istnieje `a2`. Utracona odpowiedź jest dodatkowo odzyskiwana pod tym samym
+kluczem bez drugiego skutku; lease, fencing i idempotency nadal chronią zapis.
+
+Jeśli sweep wykryje problem, Supervisor emituje tylko zamrożony stage pack do
+12 KB: jedną wybraną sprawę, bezpieczny kontekst, bazowy commit i zamknięte
+uprawnienia `local_read`, `local_patch`, `local_ci`. Agent nie otrzymuje tokenu,
+prywatnego API, Railway ani prawa do pusha, deployu, migracji czy kontaktu
+zewnętrznego. Wynik agenta ma ścisły kontrakt, a końcowy receipt wiąże hashe
+wejścia, diffu, lokalnego CI, recenzji i accountability. Receipt jest zapisywany
+atomowo w `.cache/maintenance-paper`; ten sam klucz z innym materiałem kończy się
+błędem, a identyczna próba odzyskuje istniejący plik.
+
+Nowy serwis crona ma jawne ustawienia Railway: start
+`npm run maintenance:supervisor-tick`, harmonogram `*/5 * * * *`, restart
+`NEVER`, brak healthchecka, pre-deploy i publicznej domeny. Nie wskazuje
+repozytoryjnego `railway.toml` używanego przez web; ten starszy mechanizm Railway
+jest wycofywany dla nowych usług. Po każdym wdrożeniu manifest serwisu jest
+sprawdzany pod kątem tych wartości. Paper-mode nie wykonuje napraw produkcyjnych
+i zawsze zwraca `effects_performed=false`.
+
+### Aktywacja i rollback
+
+1. Utworzyć prywatny serwis Railway z jedną repliką i bez harmonogramu, domeny,
+   healthchecka ani pre-deploy. Ustawić prywatny `DATABASE_URL`,
+   `MAINTENANCE_SUPERVISOR_MODE=paper`, godzinę sweepu i start command.
+2. Wykonać one-shot smoke. Jednorazowe wymuszenie wymaga jednocześnie
+   `MAINTENANCE_FORCE_SWEEP=1` i `MAINTENANCE_FORCE_CONFIRM=paper_manual_once`
+   podanych tylko w poleceniu procesu; obu zmiennych nie wolno zapisać w serwisie.
+3. Potwierdzić `effects_performed=false`, maintenance-only writes, aktywny
+   `actions_disabled=true` oraz effective deployment manifest: właściwy commit,
+   start, `NEVER`/0, jedna replika, brak healthchecka, pre-deploy i domeny.
+4. Dopiero po tym ustawić `*/5 * * * *`, ponownie sprawdzić manifest i pierwszy
+   automatyczny no-op/watchdog.
+
+Rollback zaczyna się od usunięcia lub zatrzymania harmonogramu. Kill switch
+pozostaje aktywny. Następnie można wrócić do poprzedniego obrazu/usługi; nie
+cofa się migracji, nie usuwa historii runów ani receiptów. Po rollbacku ręcznie
+wykonuje się watchdog i prywatny preflight.
 
 Nie może użyć produkcyjnego credentiala implementera, zmienić Railway, wykonać
 pusha, deployu, migracji, retry importu ani działania zewnętrznego.

@@ -104,6 +104,26 @@ test('runner follows acquire then direct health then complete and performs no ef
   assert.equal('handle' in result, false);
 });
 
+test('runner fails closed before the sweep when the canonical kill switch is not enabled', async () => {
+  const calls = [];
+  const result = await runHealthSweepCli({}, config(), {
+    acquire: async () => ({ status: 'acquired', actions_disabled: false, handle: HANDLE }),
+    runMaintenanceHealthSweep: async () => { calls.push('sweep'); },
+    completeHealthSweep: async () => { calls.push('complete'); },
+    failRun: async (_database, handle, code) => {
+      calls.push(['fail', handle, code]);
+      return {
+        status: 'failed', run_id: '7', code,
+        receipt: { version: 'radar_accountability_v1', status: 'failed', code, remaining: [] },
+      };
+    },
+  });
+  assert.deepEqual(calls, [['fail', HANDLE, 'control_plane_failed']]);
+  assert.equal(result.status, 'failed');
+  assert.equal(result.code, 'control_plane_failed');
+  assert.equal(result.effects_performed, false);
+});
+
 test('runner terminalizes a failed direct database sweep with a typed safe code', async () => {
   const calls = [];
   const result = await runHealthSweepCli({}, config(), {

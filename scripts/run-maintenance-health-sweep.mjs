@@ -81,6 +81,9 @@ export async function runHealthSweepCli(database, config, operations = {}) {
     config.executor,
   );
   if (claimed.status !== 'acquired') return publicResult(claimed);
+  if (claimed.actions_disabled !== true) {
+    return publicResult(await failOperation(database, claimed.handle, 'control_plane_failed'));
+  }
 
   let sweep;
   try {
