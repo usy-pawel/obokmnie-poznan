@@ -39,6 +39,15 @@ python scripts/import-poland-postgis.py
 Strona będzie dostępna pod `http://localhost:3000`, stan usługi pod `/health`,
 a stan ostatniej aktualizacji danych pod `/api/data-status`.
 
+Read-only paper preflight zapisuje ograniczony lokalny receipt w `.cache`:
+
+```powershell
+npm run maintenance:preflight -- --base-url http://localhost:3000 --allow-localhost
+```
+
+Preflight ma wersję `radar_maintenance_api_v1`, czyta wyłącznie publiczne endpointy
+i nie zapisuje niczego w PostgreSQL.
+
 ## Lokalne CI
 
 ```powershell

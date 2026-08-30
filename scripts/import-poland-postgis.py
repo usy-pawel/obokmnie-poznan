@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
 import csv
 import hashlib
 import io
@@ -8,6 +9,7 @@ import json
 import os
 import re
 import sqlite3
+import sys
 import threading
 import time
 import zipfile
@@ -48,6 +50,51 @@ MIN_PUBLISHED_RATIO = float(os.environ.get("OBOKMNIE_MIN_PUBLISHED_RATIO", "0.45
 POLAND_BOUNDS = (14.0, 48.8, 24.3, 55.3)
 THREAD_LOCAL = threading.local()
 ACTIVE_IMPORT_ID = None
+IMPORT_ADVISORY_LOCK_KEY = 0x52414441525A4D49
+IMPORT_ALREADY_RUNNING = "import_already_running"
+IMPORT_ALREADY_RUNNING_EXIT_CODE = 0
+STAGE_ALREADY_RUNNING = "stage_already_running"
+
+
+class ImportAlreadyRunning(RuntimeError):
+    code = IMPORT_ALREADY_RUNNING
+
+
+class StageAlreadyRunning(RuntimeError):
+    code = STAGE_ALREADY_RUNNING
+
+
+@contextlib.contextmanager
+def import_advisory_lock():
+    """Hold the importer-wide session lock until the mutating run finishes."""
+    connection = postgres_connection()
+    try:
+        connection.autocommit = True
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT pg_try_advisory_lock(%s)", (IMPORT_ADVISORY_LOCK_KEY,))
+            if not cursor.fetchone()[0]:
+                raise ImportAlreadyRunning(IMPORT_ALREADY_RUNNING)
+        yield
+    finally:
+        connection.close()
+
+
+@contextlib.contextmanager
+def stage_advisory_lock():
+    """Serialize access to the shared SQLite stage without a second service."""
+    STAGE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = STAGE_PATH.with_name(f"{STAGE_PATH.name}.lock.sqlite")
+    connection = sqlite3.connect(lock_path, timeout=0, isolation_level=None)
+    try:
+        try:
+            connection.execute("BEGIN EXCLUSIVE")
+        except sqlite3.OperationalError as error:
+            if "locked" in str(error).lower():
+                raise StageAlreadyRunning(STAGE_ALREADY_RUNNING) from error
+            raise
+        yield
+    finally:
+        connection.close()
 
 
 def clean(value):
@@ -700,13 +747,27 @@ def run_import():
 
 
 def main():
+    global ACTIVE_IMPORT_ID
+    ACTIVE_IMPORT_ID = None
     try:
-        run_import()
-    except Exception as error:
-        if not STAGE_ONLY and not FETCH_ONLY:
-            fail_import(ACTIVE_IMPORT_ID, error)
-        raise
+        if STAGE_ONLY or FETCH_ONLY:
+            with stage_advisory_lock():
+                run_import()
+        else:
+            with import_advisory_lock():
+                try:
+                    with stage_advisory_lock():
+                        run_import()
+                except StageAlreadyRunning:
+                    raise
+                except Exception as error:
+                    fail_import(ACTIVE_IMPORT_ID, error)
+                    raise
+    except (ImportAlreadyRunning, StageAlreadyRunning) as error:
+        print(json.dumps({"ok": True, "skipped": True, "code": error.code}), flush=True)
+        return IMPORT_ALREADY_RUNNING_EXIT_CODE
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

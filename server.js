@@ -7,6 +7,7 @@ import {
   deterministicContext,
   generateAiContext,
 } from './lib/case-context.mjs';
+import { readDataStatus, readHealth } from './lib/service-health.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -61,47 +62,13 @@ app.use(compression());
 app.use(express.static('public', { maxAge: '1h', etag: true }));
 
 app.get('/health', async (_request, response) => {
-  try {
-    if (pool) await pool.query('SELECT 1');
-    response.json({ ok: true, database: Boolean(pool) });
-  } catch {
-    response.status(503).json({ ok: false, database: true });
-  }
+  const result = await readHealth(pool);
+  response.status(result.statusCode).json(result.body);
 });
 
-app.get('/api/data-status', async (_request, response, next) => {
-  try {
-    const result = await pool.query(`
-      SELECT id, status, started_at, finished_at,
-             to_char(period_start,'YYYY-MM-DD') AS period_start,
-             to_char(period_end,'YYYY-MM-DD') AS period_end,
-             metrics,
-             CASE
-               WHEN status='failed' THEN 'failed'
-               WHEN status='running' AND started_at < now() - interval '3 hours' THEN 'failed'
-               WHEN status='running' THEN 'updating'
-               WHEN finished_at < now() - interval '48 hours' THEN 'stale'
-               ELSE 'healthy'
-             END AS data_status
-      FROM imports
-      ORDER BY id DESC
-      LIMIT 1
-    `);
-    if (!result.rowCount) return response.json({ status: 'unknown', last_import: null });
-    const latest = result.rows[0];
-    response.status(latest.data_status === 'failed' ? 503 : 200).json({
-      status: latest.data_status,
-      last_import: {
-        id: latest.id,
-        state: latest.status,
-        started_at: latest.started_at,
-        finished_at: latest.finished_at,
-        period_start: latest.period_start,
-        period_end: latest.period_end,
-        metrics: latest.metrics,
-      },
-    });
-  } catch (error) { next(error); }
+app.get('/api/data-status', async (_request, response) => {
+  const result = await readDataStatus(pool);
+  response.status(result.statusCode).json(result.body);
 });
 
 app.get('/api/meta', async (request, response, next) => {

@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
+  readFile(new URL('../lib/service-health.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/003_data_integrity.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/004_exact_city_index.sql', import.meta.url), 'utf8'),
@@ -71,7 +72,8 @@ test('API exposes health, overview, search, radar, detail and lazy context route
   assert.match(server, /DATE_RANGES/);
   assert.match(server, /make_interval\(months=>/);
   assert.match(server, /AS historical/);
-  assert.match(server, /interval '48 hours'/);
+  assert.match(serviceHealth, /FORTY_EIGHT_HOURS_MS/);
+  assert.match(serviceHealth, /last_success/);
   assert.match(importer, /seed_existing_parcels/);
   assert.match(importer, /case_fingerprint/);
   assert.match(importer, /set_config\('obokmnie\.import_id'/);

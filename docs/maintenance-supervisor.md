@@ -52,7 +52,9 @@ Severity pochodzi z kodu i metryk, nigdy z narracji modelu.
 Importer nie używa lease'u Supervisora. Utrzymuje osobne sesyjne PostgreSQL
 advisory lock przez cały rzeczywisty przebieg, także gdy staging trwa dłużej niż
 50 minut. Drugi importer kończy się bez mutacji z trwałym kodem
-`import_already_running`. Fencing chroni wyłącznie późniejszy control plane.
+`import_already_running` i kodem procesu `0`, aby kontrolowany skip nie uruchamiał
+restartów crona. Wspólny plik SQLite stage ma osobną blokadę sesyjną SQLite.
+Fencing chroni wyłącznie późniejszy control plane.
 
 Warunek `radar_diff` staje się aktywny dopiero wtedy, gdy udany import zapisuje
 w metrykach liczbę oczekiwanych zmian według typu oraz liczbę faktycznie
