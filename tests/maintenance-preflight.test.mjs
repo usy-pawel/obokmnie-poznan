@@ -79,6 +79,19 @@ test('preflight emits database_unavailable when public database readiness fails'
   });
 });
 
+test('failed daily import has the same P0 severity as the durable control plane', () => {
+  const preflight = buildMaintenancePreflight({
+    health: { ok: true, database: true, configured: true },
+    dataStatus: dataStatus('failed'),
+    now: NOW,
+  });
+  assert.deepEqual(preflight.selected_issue, {
+    severity: 'P0',
+    code: 'daily_import_failed',
+    owner: 'engineer',
+  });
+});
+
 test('collector reads only public health endpoints and returns a local receipt payload', async () => {
   const requested = [];
   const fetchImpl = async (url) => {

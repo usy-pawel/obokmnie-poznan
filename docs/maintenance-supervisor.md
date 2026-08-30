@@ -29,7 +29,7 @@ Pierwszy rejestr health jest zamknięty i deterministyczny:
 |---|---|---|---|---|
 | `web_database` | `SELECT 1` | nie dotyczy | brak konfiguracji lub połączenia | engineer / human dla credentiala |
 | `daily_import` | `imports` | ostatni sukces starszy niż 36 h | brak sukcesu przez 48 h albo latest `failed` | automatic retry raz, potem engineer |
-| `data_coverage` | metryki udanego importu | spadek poza zatwierdzony zakres | mniej niż 16 województw lub walidacja publikacji | engineer |
+| `data_coverage` | metryki udanego importu | spadek poza zatwierdzony zakres | liczba województw inna niż 16 lub walidacja publikacji | engineer |
 | `radar_diff` | metryki importu i `case_events` | rozbieżność liczby oczekiwanych oraz zapisanych zdarzeń | zdarzenia z częściowego/nieudanego importu | engineer |
 
 Retry jest ograniczony i idempotentny. Brak credentiala, cofnięta zgoda,
@@ -40,7 +40,7 @@ decyzję lub zadanie, a nie kolejną ślepą próbę.
 
 1. **P0:** ryzyko prywatności, sekretu, korupcji danych, publikacja
    niezweryfikowanego zestawu albo błędna geometria masowa.
-2. **P1:** web niedostępny, import `failed`, dane `stale`, alerty zablokowane,
+2. **P1:** web niedostępny, dane `stale`, alerty zablokowane,
    utracony lease lub nieudana migracja.
 3. **P2:** regresja wydajności, częściowe pokrycie nieblokujące publikacji,
    problem UX lub dostępności.
@@ -61,23 +61,24 @@ w metrykach liczbę oczekiwanych zmian według typu oraz liczbę faktycznie
 zapisanych `case_events`; projektor porównuje te wartości 1:1. Do tego czasu
 sprawdza wyłącznie zakaz publikacji eventów z importu innego niż `success`.
 
-## Docelowy minimalny model danych
+## Wdrożony minimalny model danych
 
-Poniższe tabele powstają dopiero po obserwacji read-only paper-mode. Nie są
-warunkiem naprawienia locka importera ani publicznego health.
+Control plane używa trzech tabel i istniejących danych domenowych:
 
-- `maintenance_state` — bieżąca projekcja, kill switch, ostatni sukces i
-  heartbeat; jeden rekord dla scope `radar_operations`.
-- `maintenance_invocations` — przebieg, wersja kontraktu, context hash, wynik i
-  terminalny accountability receipt.
-- `maintenance_leases` — jeden aktywny owner scope, fencing token i expiry.
-- `maintenance_issues` — fingerprint, severity, kod, wystąpienia, status,
-  bezpieczny kontekst i owner.
-- `maintenance_tasks` oraz `maintenance_task_runs` — typowane zadania,
-  idempotency key, claim i wynik.
-- `maintenance_events` — append-only ślad zmian stanu.
-- `maintenance_decisions` — konkretne pytanie, dozwolone akcje i status.
-- `metric_snapshots` — append-only pomiary świeżości, pokrycia i kosztu.
+- `maintenance_runs` — historia wywołań, idempotency key, niezmienny context
+  hash, fencing token, wynik i terminalny accountability receipt;
+- `maintenance_leases` — jeden aktywny owner scope, kill switch, fencing token
+  i expiry;
+- `maintenance_issues` — bieżąca projekcja fingerprintowanych problemów,
+  severity, kod, wystąpienia, status, bezpieczny kontekst i owner.
+
+Historia `maintenance_runs` jest śladem przebiegów chronionym triggerem przed
+`DELETE`, `TRUNCATE`, zmianą tożsamości oraz modyfikacją terminalnego
+rekordu. Ochrona dotyczy zwykłego kontraktu zapisu aplikacji; nie zastępuje
+backupów ani uprawnień administracyjnych. Issue jest projekcją stanu, nie
+dziennikiem zdarzeń. Osobne tabele zadań, decyzji, eventów i metryk nie powstają
+w tym etapie: dokładamy je wyłącznie wtedy, gdy kolejne etapy wykażą potrzebę,
+której nie pokrywa ten model.
 
 Nie przechowujemy pełnych logów, promptów, odpowiedzi modeli, e-maili ani
 sekretów. Bezpieczny kontekst ma zamknięty schemat i twardy limit rozmiaru.
@@ -94,6 +95,38 @@ sekretów. Bezpieczny kontekst ma zamknięty schemat i twardy limit rozmiaru.
   token. Stary nie może zapisać transition, result ani release.
 - Utrata odpowiedzi po trwałym zapisie jest obsługiwana przez odczyt istniejącego
   receipt, bez powtórzenia skutku.
+
+W obecnym etapie deadline jest egzekwowany przy każdym kolejnym kontakcie z
+control plane: `acquire`, `heartbeat`, zakończenie lub porażka materializują
+`timed_out` atomowo. Jeżeli proces zniknie i nikt więcej nie wykona operacji,
+rekord może pozostać fizycznie `running` po deadline, choć lease jest już
+logicznie nieważny. Cykliczny watchdog materializujący takie timeouty należy do
+etapu Supervisora; do jego wdrożenia nie raportujemy gwarancji fizycznego
+zakończenia rekordu w 50. minucie.
+
+Restore bazy wymaga zatrzymania wszystkich workerów Supervisora i potwierdzenia,
+że żaden stary proces nie działa. Po restore, jeszcze przed ich wznowieniem,
+operator uruchamia `npm run maintenance:restore-reset` z jednorazową zmienną
+`CONFIRM_RADAR_RESTORE_RESET=radar_operations`. Narzędzie pod advisory lockiem
+i w jednej transakcji:
+
+1. oznacza wszystkie odtworzone przebiegi `running` jako `blocked` z kodem
+   `restore_invalidated` i terminalnym receiptem
+   `radar_restore_reset_v1`;
+2. czyści tożsamość lease'u, zwiększa fencing token i ustawia
+   `actions_disabled=true`;
+3. przed commitem sprawdza brak przebiegów `running`, pusty lease oraz aktywny
+   kill switch.
+
+Receipt resetu zapisuje
+`accountability_status=not_evaluated_after_restore` i celowo nie zawiera
+`remaining=[]`: reset nie jest health sweepem i nie może świadczyć, że
+odtworzone problemy zostały rozwiązane. Następny preflight oraz pełny
+accountability sweep są obowiązkowe przed zdjęciem kill switcha.
+
+Dopiero nowy preflight i osobna decyzja o zdjęciu kill switcha pozwalają wznowić
+pracę. Bez tej sekwencji restore może cofnąć także fence i przywrócić ważność
+starego uchwytu, więc produkcyjny restore nie jest dozwolony.
 
 Limit 50 minut dotyczy wyłącznie przebiegu Supervisora. Nie ogranicza importera,
 który może trwać około dwóch godzin i chroni się własnym advisory lockiem.
