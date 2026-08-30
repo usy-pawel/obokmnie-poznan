@@ -298,18 +298,33 @@ def seed_legacy_cache(database):
     print(f"Seeded {len(batch)} legacy cached parcels", flush=True)
 
 
-def seed_existing_parcels(database):
+def seed_existing_parcels(database, cutoff, newest):
     """Use PostGIS as the durable positive and negative cache for parcel lookups."""
     ensure_parcel_cache(database)
-    requested = database.execute("""
-      SELECT DISTINCT parcel_id FROM source_rows
-      WHERE parcel_id <> '' AND parcel_id NOT IN (SELECT requested_id FROM parcel_cache)
-      ORDER BY parcel_id
-    """)
     connection = postgres_connection()
     reused = 0
     try:
         with connection.cursor() as cursor:
+            cursor.execute("""
+              SELECT DISTINCT unnest(parcel_ids) AS parcel_id
+              FROM cases
+              WHERE source_active AND received_date BETWEEN %s AND %s
+            """, (cutoff, newest))
+            for batch in chunks((row[0] for row in cursor if row[0]), 5000):
+                now = datetime.now().isoformat()
+                database.executemany(
+                    "INSERT OR IGNORE INTO parcel_cache VALUES (?,?,?,?,?,?,?)",
+                    [(parcel_id, parcel_id, None, None, "postgis-existing", None, now)
+                     for parcel_id in batch],
+                )
+                database.commit()
+                reused += len(batch)
+
+            requested = database.execute("""
+              SELECT DISTINCT parcel_id FROM source_rows
+              WHERE parcel_id <> '' AND parcel_id NOT IN (SELECT requested_id FROM parcel_cache)
+              ORDER BY parcel_id
+            """)
             for batch in chunks((row[0] for row in requested), 5000):
                 cursor.execute("""
                   SELECT parcel_id FROM parcels
@@ -653,7 +668,7 @@ def run_import():
     metrics.update(validate_stage(stage, cutoff, newest))
     if not FETCH_ONLY:
         ACTIVE_IMPORT_ID = start_import(cutoff, newest)
-    metrics["parcel_lookup_results_reused"] = seed_existing_parcels(stage)
+    metrics["parcel_lookup_results_reused"] = seed_existing_parcels(stage, cutoff, newest)
     if SKIP_ULDK:
         print("Skipping ULDK fallback; unmatched historical parcel ids remain unpublished", flush=True)
     else:
