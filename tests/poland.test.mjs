@@ -97,6 +97,11 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(html, /data-range="all"/);
   assert.match(frontend, /range: '1y'/);
   assert.match(frontend, /params\.set\('range', state\.range\)/);
+  const rangeHandler = frontend.slice(
+    frontend.indexOf('ui.rangeButtons.forEach'),
+    frontend.indexOf("ui.search.addEventListener('input'"),
+  );
+  assert.doesNotMatch(rangeHandler, /lastFittedQuery/);
   assert.match(frontend, /is-historical/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);
 });

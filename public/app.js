@@ -638,7 +638,6 @@ ui.filters.forEach((button) => button.addEventListener('click', () => {
 
 ui.rangeButtons.forEach((button) => button.addEventListener('click', () => {
   state.range = button.dataset.range;
-  state.lastFittedQuery = '';
   state.listLimit = LIST_SIZE;
   ui.rangeButtons.forEach((item) => {
     const active = item === button;
