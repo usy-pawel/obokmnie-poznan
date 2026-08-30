@@ -45,7 +45,7 @@ Read-only paper preflight zapisuje ograniczony lokalny receipt w `.cache`:
 npm run maintenance:preflight -- --base-url http://localhost:3000 --allow-localhost
 ```
 
-Preflight ma wersję `radar_maintenance_api_v1`, czyta wyłącznie publiczne endpointy
+Paper preflight ma wersję `radar_maintenance_paper_v1`, czyta wyłącznie publiczne endpointy
 i nie zapisuje niczego w PostgreSQL.
 
 Agregatową weryfikację najnowszego udanego importu i eventów Radaru uruchamia:

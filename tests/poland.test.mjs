@@ -47,8 +47,8 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   );
 });
 
-test('API exposes health, overview, search, radar, detail and lazy context routes', () => {
-  for (const route of ['/health', '/api/data-status', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/radar', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
+test('API exposes health, private maintenance, overview, search, radar, detail and lazy context routes', () => {
+  for (const route of ['/health', '/api/data-status', '/api/internal/maintenance/preflight', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/radar', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);

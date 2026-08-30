@@ -136,13 +136,18 @@ który może trwać około dwóch godzin i chroni się własnym advisory lockiem
 Prywatny preflight ma wersję `radar_maintenance_api_v1` i zwraca maksymalnie
 32 KB:
 
-- czas i freshness,
-- jeden wybrany problem lub zadanie,
-- zagregowane metryki ostatniego oraz ostatniego udanego importu,
-- status lease'u bez credentiala,
-- kill switch i politykę autonomii,
-- listę brakujących wymaganych zdolności,
+- dokładnie cztery zredagowane obserwacje health,
+- deterministyczny wybór P0, następnie P1, a przy braku problemów plan sweepu,
+- status lease'u bez `run_id`, ownera, fence'a ani context hash,
+- stan kill switcha,
+- ograniczoną listę otwartych problemów z ownerem i następną akcją,
 - `contextHash` wyliczony ze stabilnego JSON.
+
+Endpoint `GET /api/internal/maintenance/preflight` wymaga bearer tokenu z
+`MAINTENANCE_API_TOKEN`, porównywanego stałoczasowo. Brak konfiguracji, brak
+nagłówka i błędny token dają tę samą zredagowaną odpowiedź `404`; endpoint nie
+ustawia `WWW-Authenticate`, a każda jego odpowiedź ma `Cache-Control: no-store`.
+Publiczne `/health` i `/api/data-status` zachowują dotychczasowy kontrakt.
 
 Implementer dostaje wyłącznie zamrożony stage pack z publiczną referencją,
 kodem błędu, severity, liczbą wystąpień, bezpiecznym kontekstem i kryteriami
@@ -167,6 +172,20 @@ się wtedy błędem `database_unavailable`, bez fałszywego terminalnego sukcesu
 bez drugiego magazynu danych. Po odzyskaniu bazy kolejny sweep zapisuje
 incydent z czasem pierwszej zaobserwowanej porażki dostępnym z bezpiecznego
 receiptu wykonania automatyzacji.
+
+Lokalny runner `npm run maintenance:health-sweep` wymaga stabilnego
+`MAINTENANCE_INVOCATION_KEY`, `MAINTENANCE_PREFLIGHT_VERSION=radar_maintenance_api_v1`
+i zamrożonego `MAINTENANCE_CONTEXT_HASH` z prywatnego preflightu. Wykonuje
+wyłącznie `acquire`, bezpośredni odczyt health oraz
+`completeHealthSweep` albo typowane `failRun`. Nie uruchamia importu, deployu,
+wiadomości ani innego efektu; `actions_disabled=true` nie blokuje monitoringu i
+zawsze odpowiada `effects_performed=false`. Powtórzenie terminalnego klucza
+odzyskuje istniejący receipt bez ponownego sweepu.
+
+Wynik rozdziela `execution_ok` od `health_ok`. Terminalny receipt z
+przypisanym problemem P0/P1 potwierdza wykonanie accountability, ale nie jest
+zielonym stanem zdrowia; runner zwraca odpowiednio priorytet i nie kończy się
+kodem sukcesu.
 
 ## Human gates
 

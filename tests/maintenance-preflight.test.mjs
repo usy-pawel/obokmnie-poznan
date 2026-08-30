@@ -88,7 +88,7 @@ test('failed daily import has the same P0 severity as the durable control plane'
   assert.deepEqual(preflight.selected_issue, {
     severity: 'P0',
     code: 'daily_import_failed',
-    owner: 'engineer',
+    owner: 'data_pipeline',
   });
 });
 

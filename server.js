@@ -8,6 +8,7 @@ import {
   generateAiContext,
 } from './lib/case-context.mjs';
 import { readDataStatus, readHealth } from './lib/service-health.mjs';
+import { createPrivateMaintenancePreflightHandler } from './lib/maintenance-private-api.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -23,7 +24,15 @@ const DATE_RANGES = new Map([
   ['all', null],
 ]);
 const pool = process.env.DATABASE_URL
-  ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }, max: 10 })
+  ? new pg.Pool({
+    connectionString: process.env.DATABASE_URL,
+    ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+    max: 10,
+    connectionTimeoutMillis: 5_000,
+    statement_timeout: 15_000,
+    query_timeout: 20_000,
+    application_name: 'radar_web',
+  })
   : null;
 const contextInFlight = new Map();
 const contextRateLimits = new Map();
@@ -70,6 +79,10 @@ app.get('/api/data-status', async (_request, response) => {
   const result = await readDataStatus(pool);
   response.status(result.statusCode).json(result.body);
 });
+
+app.get('/api/internal/maintenance/preflight', createPrivateMaintenancePreflightHandler({
+  database: pool,
+}));
 
 app.get('/api/meta', async (request, response, next) => {
   try {
@@ -448,7 +461,10 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
-app.use('/api', (_request, response) => response.status(404).json({ error: 'not_found' }));
+app.use('/api', (_request, response) => response
+  .set('Cache-Control', 'no-store')
+  .status(404)
+  .json({ error: 'not_found' }));
 app.use((error, _request, response, _next) => {
   console.error(error);
   response.status(500).json({ error: 'internal_error' });
