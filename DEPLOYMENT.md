@@ -39,6 +39,7 @@ Endpointy produkcyjne:
 - `/api/meta`
 - `/api/map`
 - `/api/search`
+- `/api/radar` — zmiany dotyczące obserwowanych działek po udanych importach
 - `/api/cases/:caseKey`
 - `/api/cases/:caseKey/context` — kontekst pobierany na żądanie i przechowywany w cache
 
@@ -52,8 +53,9 @@ pobierane wyłącznie na żądanie dla aktualnego widoku mapy.
 npm run check
 ```
 
-Wynik: 6/6 testów Node oraz 3/3 testów Python. Przeszły także kontrole składni
-serwera, frontendu, migracji i importerów.
+Wynik: 6/6 testów Node oraz 7/7 testów Python. Przeszły także kontrole składni
+serwera, frontendu, migracji i importerów. Wszystkie migracje, w tym Radar,
+przeszły również na izolowanym lokalnym PostGIS 16 / PostGIS 3.4.
 
 ## Test produkcyjny
 
@@ -68,7 +70,8 @@ Oczekiwany wynik po wdrożeniu: 175 361 spraw z ostatnich 12 miesięcy,
 
 Test przeglądarkowy 390×844 potwierdził przełączenie 12 miesięcy / 3 lata /
 5 lat / od 2016, nieblokujące ładowanie w tle, wejście z kraju do 8 obszarów
-województwa oraz pełne szczegóły i kontekst starszej sprawy.
+województwa, pełne szczegóły sprawy oraz mobilny przepływ obserwowania działki
+w Radarze.
 
 ## Infrastruktura
 
@@ -82,3 +85,14 @@ publikację podejrzanie niepełnego przebiegu; błąd jest zapisany w tabeli
 `imports` i widoczny przez `/api/data-status`. Usługa używa minimalnego obrazu
 `Dockerfile.cron`; nie uruchamia serwera WWW i nie pozostaje aktywna między
 przebiegami.
+
+Potwierdzona próba aktualizatora z 30 sierpnia 2026 opublikowała 175 362 sprawy
+z 16 województw, 437 667 relacji sprawa–działka i ponownie użyła 406 495 wyników
+działek bez zapytań ULDK. Etap bazodanowy trwał około 1 min 46 s, a cały przebieg
+około 7 min 10 s. Harmonogram: codziennie 03:30 UTC.
+
+Radar Zmian MVP przechowuje listę maksymalnie 20 obserwowanych działek wyłącznie
+w przeglądarce użytkownika. Deterministyczny fingerprint zapisuje zdarzenia
+`new`, `changed` i `removed` wraz z zakresem zmienionych pól; API publikuje tylko
+zdarzenia należące do importów ze statusem `success`. Pierwszym kanałem
+powiadomienia jest licznik oraz oś zmian na stronie.

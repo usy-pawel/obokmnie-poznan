@@ -358,6 +358,30 @@ app.get('/api/suggestions', async (request, response, next) => {
   } catch (error) { next(error); }
 });
 
+app.get('/api/radar', async (request, response, next) => {
+  try {
+    const parcelIds = [...new Set([request.query.parcel].flat().map((value) => String(value || '').trim()).filter(Boolean))]
+      .slice(0, 20);
+    if (!parcelIds.length) return response.json({ events: [], checked_at: new Date().toISOString() });
+    if (parcelIds.some((value) => value.length > 120 || !/^[\p{L}\p{N}_.\/-]+$/u.test(value))) {
+      return response.status(400).json({ error: 'invalid_parcel_id' });
+    }
+    const since = new Date(String(request.query.since || ''));
+    const validSince = Number.isNaN(since.getTime()) ? new Date(Date.now() - 30 * 86400000) : since;
+    const result = await pool.query(`
+      SELECT e.id, e.event_type, e.changed_fields, e.snapshot,
+             e.occurred_at, i.finished_at AS detected_at
+      FROM case_events e
+      JOIN imports i ON i.id=e.import_id AND i.status='success'
+      WHERE (e.snapshot->'parcel_ids') ?| $1::text[]
+        AND e.occurred_at > $2
+      ORDER BY e.occurred_at DESC, e.id DESC
+      LIMIT 100
+    `, [parcelIds, validSince.toISOString()]);
+    response.json({ events: result.rows, checked_at: new Date().toISOString() });
+  } catch (error) { next(error); }
+});
+
 app.get('/api/cases/:caseKey', async (request, response, next) => {
   try {
     const result = await pool.query(`

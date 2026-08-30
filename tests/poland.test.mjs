@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/003_data_integrity.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/004_exact_city_index.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/006_case_contexts.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/007_history_range_indexes.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/009_change_radar.sql', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
@@ -32,6 +33,9 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(contextMigration, /source_fingerprint/);
   assert.match(historyIndexMigration, /cases_published_received_date_idx/);
   assert.match(historyIndexMigration, /cases_published_voivodeship_date_idx/);
+  assert.match(radarMigration, /CREATE TABLE IF NOT EXISTS case_events/);
+  assert.match(radarMigration, /CREATE TRIGGER cases_change_radar/);
+  assert.match(radarMigration, /snapshot->'parcel_ids'/);
   assert.match(importer, /OBOKMNIE_PERIOD_START/);
   assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
   assert.match(importer, /Oczekiwano 18 archiwów GUNB/);
@@ -42,8 +46,8 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   );
 });
 
-test('API exposes health, overview, search, detail and lazy context routes', () => {
-  for (const route of ['/health', '/api/data-status', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
+test('API exposes health, overview, search, radar, detail and lazy context routes', () => {
+  for (const route of ['/health', '/api/data-status', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/radar', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
@@ -69,6 +73,9 @@ test('API exposes health, overview, search, detail and lazy context routes', () 
   assert.match(server, /AS historical/);
   assert.match(server, /interval '48 hours'/);
   assert.match(importer, /seed_existing_parcels/);
+  assert.match(importer, /case_fingerprint/);
+  assert.match(importer, /set_config\('obokmnie\.import_id'/);
+  assert.doesNotMatch(importer, /cursor\.executemany\(upsert_case, values\)\s+connection\.commit\(\)/);
   assert.match(importer, /source_active=false/);
   assert.match(importer, /validate_publication/);
 });
@@ -83,6 +90,10 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /baseLayer: 'streets'/);
   assert.match(frontend, /scrollSelectedCard/);
   assert.match(frontend, /detail\?\.parcels/);
+  assert.match(frontend, /RADAR_STORAGE_KEY/);
+  assert.match(frontend, /watchSelectedParcels/);
+  assert.match(html, /id="radar-panel"/);
+  assert.match(html, /class="radar-action"/);
   assert.match(frontend, /loadCaseContext/);
   assert.match(frontend, /Kontekst jest chwilowo niedostępny/);
   assert.doesNotMatch(frontend, /W promieniu 250 m|W promieniu 1 km/);

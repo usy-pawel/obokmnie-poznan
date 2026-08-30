@@ -69,6 +69,16 @@ npm run update:data
 
 Pełny import wykonany 30 sierpnia 2026 trwał 7 049 sekund. Baza po imporcie zajmuje 12 181 965 971 bajtów, czyli około 11,35 GiB.
 
+## Radar Zmian MVP
+
+Po rozwinięciu sprawy użytkownik może obserwować jej działkę. Lista obserwowanych działek jest
+przechowywana wyłącznie w jego przeglądarce, bez konta i bez danych osobowych. Po kolejnych udanych
+importach endpoint `GET /api/radar` zwraca nowe, zmienione lub usunięte ze źródła sprawy dotyczące
+obserwowanych działek. Pierwszym kanałem powiadomienia jest licznik i oś zmian w interfejsie.
+
+Detekcja jest deterministyczna i nie korzysta z AI. Zdarzenia są publikowane tylko dla importów ze
+statusem `success`; objaśnienie AI pozostaje osobną funkcją uruchamianą na żądanie w karcie sprawy.
+
 ## Architektura
 
 - statyczny HTML, CSS i JavaScript obsługiwany przez Express,

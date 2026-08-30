@@ -26,6 +26,9 @@ assert.ok(suggestions.length > 0 && suggestions.length <= 7, 'invalid suggestion
 assert.ok(suggestions.every((item) => ['city', 'voivodeship'].includes(item.kind)));
 assert.ok(suggestions.every((item) => item.label && item.context));
 
+const radar = await get('/api/radar');
+assert.deepEqual(radar.events, []);
+
 const overview = await get('/api/map?bbox=14,48.8,24.3,55.3&zoom=6');
 assert.equal(overview.type, 'FeatureCollection');
 assert.equal(overview.features.length, 16, 'country map should show 16 voivodeships');
@@ -75,4 +78,5 @@ console.log(JSON.stringify({
   poznan_cases: poznan.features.length,
   selected_parcels: detail.parcels.length,
   suggestions: suggestions.length,
+  radar_events: radar.events.length,
 }));

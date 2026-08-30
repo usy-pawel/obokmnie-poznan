@@ -1,6 +1,8 @@
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
 const LIST_SIZE = 80;
+const RADAR_STORAGE_KEY = 'obokmnie-radar-v1';
+const RADAR_SEEN_KEY = 'obokmnie-radar-seen-v1';
 const RANGE_COPY = {
   '1y': 'ostatnich 12 miesięcy',
   '3y': 'ostatnich 3 lat',
@@ -27,6 +29,11 @@ const state = {
   suggestionIndex: -1,
   suggestionController: null,
   suggestionTimer: null,
+  radarOpen: false,
+  radarWatches: readRadarWatches(),
+  radarEvents: [],
+  radarLoading: false,
+  radarError: false,
 };
 
 const ui = {
@@ -51,7 +58,155 @@ const ui = {
   zoomHint: document.querySelector('#zoom-hint'),
   dataRange: document.querySelector('#data-range'),
   heroLead: document.querySelector('#hero-lead'),
+  radarToggle: document.querySelector('#radar-toggle'),
+  radarCount: document.querySelector('#radar-count'),
+  radarPanel: document.querySelector('#radar-panel'),
+  radarClose: document.querySelector('#radar-close'),
+  radarWatches: document.querySelector('#radar-watches'),
+  radarEvents: document.querySelector('#radar-events'),
+  radarState: document.querySelector('#radar-state'),
 };
+
+function readRadarWatches() {
+  try {
+    const watches = JSON.parse(localStorage.getItem(RADAR_STORAGE_KEY) || '[]');
+    return Array.isArray(watches) ? watches.filter((watch) => watch?.parcelId && watch?.watchedAt).slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRadarWatches() {
+  localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(state.radarWatches));
+}
+
+function radarEventLabel(type) {
+  if (type === 'new') return 'Nowa sprawa';
+  if (type === 'removed') return 'Sprawa zniknęła z bieżących danych';
+  return 'Zmieniono sprawę';
+}
+
+function radarFieldLabel(field) {
+  return ({
+    received_date: 'data wpływu', decision_date: 'data decyzji', status: 'status', office: 'organ',
+    voivodeship: 'województwo', city: 'miejscowość', address: 'adres', case_kind: 'rodzaj zamierzenia',
+    description: 'opis', parcel_ids: 'działki', source_active: 'obecność w źródle', case: 'nowa sprawa',
+  })[field] || field;
+}
+
+function eventMatchesWatch(event) {
+  const parcels = event.snapshot?.parcel_ids || [];
+  return state.radarWatches.some((watch) => parcels.includes(watch.parcelId)
+    && new Date(event.occurred_at) > new Date(watch.watchedAt));
+}
+
+function renderRadar() {
+  ui.radarPanel.hidden = !state.radarOpen;
+  ui.radarToggle.setAttribute('aria-expanded', String(state.radarOpen));
+  ui.radarWatches.replaceChildren();
+  ui.radarEvents.replaceChildren();
+
+  for (const watch of state.radarWatches) {
+    const chip = document.createElement('span');
+    chip.className = 'radar-watch';
+    const label = document.createElement('span');
+    label.textContent = watch.label || watch.parcelId;
+    label.title = watch.parcelId;
+    const remove = document.createElement('button');
+    remove.type = 'button';
+    remove.setAttribute('aria-label', `Przestań obserwować działkę ${watch.parcelId}`);
+    remove.textContent = '×';
+    remove.addEventListener('click', () => {
+      state.radarWatches = state.radarWatches.filter((item) => item.parcelId !== watch.parcelId);
+      saveRadarWatches();
+      void loadRadar();
+      renderCases();
+    });
+    chip.append(label, remove);
+    ui.radarWatches.append(chip);
+  }
+
+  const visibleEvents = state.radarEvents.filter(eventMatchesWatch);
+  for (const event of visibleEvents) {
+    const article = document.createElement('article');
+    article.className = `radar-event is-${event.event_type}`;
+    const top = document.createElement('div');
+    const kind = document.createElement('strong');
+    kind.textContent = radarEventLabel(event.event_type);
+    const date = document.createElement('time');
+    date.textContent = formatDate(event.detected_at || event.occurred_at);
+    top.append(kind, date);
+    const title = document.createElement('h3');
+    title.textContent = shortTitle(event.snapshot?.description) || 'Sprawa budowlana';
+    const place = document.createElement('p');
+    place.textContent = event.snapshot?.address || event.snapshot?.city || event.snapshot?.external_id || '';
+    article.append(top, title, place);
+    if (event.changed_fields?.length) {
+      const fields = document.createElement('small');
+      fields.textContent = `Zakres: ${event.changed_fields.map(radarFieldLabel).join(', ')}`;
+      article.append(fields);
+    }
+    ui.radarEvents.append(article);
+  }
+
+  const lastSeen = new Date(localStorage.getItem(RADAR_SEEN_KEY) || 0);
+  const unseen = visibleEvents.filter((event) => new Date(event.occurred_at) > lastSeen).length;
+  ui.radarCount.textContent = String(unseen);
+  ui.radarCount.hidden = unseen === 0;
+  if (!state.radarWatches.length) ui.radarState.textContent = 'Nie obserwujesz jeszcze żadnej działki. Rozwiń sprawę na mapie i wybierz „Obserwuj działkę”.';
+  else if (state.radarLoading) ui.radarState.textContent = 'Sprawdzam zmiany…';
+  else if (state.radarError) ui.radarState.textContent = 'Nie udało się sprawdzić zmian. Spróbuj ponownie później.';
+  else if (!visibleEvents.length) ui.radarState.textContent = 'Brak nowych zmian od momentu rozpoczęcia obserwacji.';
+  else ui.radarState.textContent = `Znaleziono ${visibleEvents.length} ${visibleEvents.length === 1 ? 'zmianę' : 'zmian'}.`;
+}
+
+async function loadRadar() {
+  state.radarLoading = true;
+  state.radarError = false;
+  renderRadar();
+  if (!state.radarWatches.length) {
+    state.radarEvents = [];
+    state.radarLoading = false;
+    renderRadar();
+    return;
+  }
+  const params = new URLSearchParams();
+  for (const watch of state.radarWatches) params.append('parcel', watch.parcelId);
+  params.set('since', state.radarWatches.reduce((earliest, watch) => (
+    watch.watchedAt < earliest ? watch.watchedAt : earliest
+  ), state.radarWatches[0].watchedAt));
+  try {
+    const response = await fetch(`/api/radar?${params}`);
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const payload = await response.json();
+    state.radarEvents = payload.events || [];
+  } catch {
+    state.radarEvents = [];
+    state.radarError = true;
+  } finally {
+    state.radarLoading = false;
+    renderRadar();
+  }
+}
+
+function watchSelectedParcels(detail) {
+  const now = new Date().toISOString();
+  const known = new Set(state.radarWatches.map((watch) => watch.parcelId));
+  for (const parcel of detail?.parcels || []) {
+    if (!parcel.parcel_id || known.has(parcel.parcel_id) || state.radarWatches.length >= 20) continue;
+    state.radarWatches.push({
+      parcelId: parcel.parcel_id,
+      label: `${detail.address || detail.city || 'Działka'} · ${parcel.parcel_id}`,
+      watchedAt: now,
+    });
+    known.add(parcel.parcel_id);
+  }
+  saveRadarWatches();
+  state.radarOpen = true;
+  void loadRadar();
+  renderCases();
+  window.requestAnimationFrame(() => ui.radarPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+}
 
 function emptyCollection() {
   return { type: 'FeatureCollection', features: [] };
@@ -379,6 +534,13 @@ function renderCases() {
     aerialAction.addEventListener('click', () => {
       void selectCase(key, { moveMap: true, showAerial: true, scrollToCard: true, toggle: false });
     });
+    const radarAction = fragment.querySelector('.radar-action');
+    const allWatched = Boolean(resolvedParcelIds.length) && resolvedParcelIds.every((parcelId) => (
+      state.radarWatches.some((watch) => watch.parcelId === parcelId)
+    ));
+    radarAction.disabled = !detail || !resolvedParcelIds.length || allWatched;
+    radarAction.textContent = allWatched ? '✓ Działka jest obserwowana' : '◉ Obserwuj działkę w Radarze';
+    radarAction.addEventListener('click', () => watchSelectedParcels(detail));
     button.setAttribute('aria-expanded', String(selected));
     button.addEventListener('click', () => { void selectCase(key, { moveMap: true }); });
     ui.list.append(fragment);
@@ -701,5 +863,17 @@ ui.loadMore.addEventListener('click', () => {
 
 ui.baseLayerButtons.forEach((button) => button.addEventListener('click', () => setBaseLayer(button.dataset.baseLayer)));
 
+ui.radarToggle.addEventListener('click', () => {
+  state.radarOpen = !state.radarOpen;
+  if (state.radarOpen) localStorage.setItem(RADAR_SEEN_KEY, new Date().toISOString());
+  renderRadar();
+  if (state.radarOpen) void loadRadar();
+});
+ui.radarClose.addEventListener('click', () => {
+  state.radarOpen = false;
+  renderRadar();
+});
+
 initializeMap();
 loadMeta().catch(() => { ui.heroCount.textContent = '—'; });
+void loadRadar();

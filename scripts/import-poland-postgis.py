@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import concurrent.futures
 import csv
+import hashlib
 import io
 import json
 import os
@@ -423,6 +424,11 @@ def chunks(iterator, size=1000):
         yield batch
 
 
+def case_fingerprint(values):
+    normalized = json.dumps(values, ensure_ascii=False, separators=(",", ":"), default=str)
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 def start_import(cutoff, newest):
     connection = postgres_connection()
     try:
@@ -508,27 +514,37 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
     connection = postgres_connection()
     connection.autocommit = False
     with connection.cursor() as cursor:
+        cursor.execute("SELECT set_config('obokmnie.import_id', %s, false)", (str(import_id),))
         cases = stage.execute("SELECT * FROM staged_cases ORDER BY source_type, external_id")
         upsert_case = """
           INSERT INTO cases(case_key,source_type,external_id,received_date,decision_date,status,office,
-            voivodeship,city,address,case_kind,description,parcel_ids,updated_at,source_active,last_import_id)
-          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),true,%s)
+            voivodeship,city,address,case_kind,description,parcel_ids,source_fingerprint,
+            updated_at,source_active,last_import_id)
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),true,%s)
           ON CONFLICT(case_key) DO UPDATE SET received_date=excluded.received_date,
             decision_date=excluded.decision_date,status=excluded.status,office=excluded.office,
             voivodeship=excluded.voivodeship,city=excluded.city,address=excluded.address,
             case_kind=excluded.case_kind,description=excluded.description,parcel_ids=excluded.parcel_ids,
-            updated_at=now(),source_active=true,last_import_id=excluded.last_import_id
+            source_fingerprint=excluded.source_fingerprint,
+            updated_at=CASE WHEN cases.source_fingerprint IS DISTINCT FROM excluded.source_fingerprint
+              THEN now() ELSE cases.updated_at END,
+            source_active=true,last_import_id=excluded.last_import_id
         """
         loaded_cases = 0
         for batch in chunks(cases):
             values = []
             for row in batch:
                 source_type, external_id, received, decision, statuses, office, province, city, address, kind, description, parcels = row
+                resolved_parcels = sorted(json.loads(parcels))
+                normalized_status = statuses.replace(",", ", ")
+                fingerprint = case_fingerprint([
+                    received, decision, normalized_status, office, province, city, address,
+                    kind, description, resolved_parcels,
+                ])
                 values.append((f"{source_type}:{external_id}", source_type, external_id, received, decision,
-                               statuses.replace(",", ", "), office, province, city, address, kind,
-                               description, json.loads(parcels), import_id))
+                               normalized_status, office, province, city, address, kind,
+                               description, resolved_parcels, fingerprint, import_id))
             cursor.executemany(upsert_case, values)
-            connection.commit()
             loaded_cases += len(values)
             print(f"Loaded cases {loaded_cases}", flush=True)
 
@@ -549,7 +565,6 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
             values = [(pid, returned, wkt, wkt, geojson, geojson, datasource, error)
                       for pid, returned, wkt, geojson, datasource, error in batch]
             cursor.executemany(upsert_parcel, values)
-            connection.commit()
             loaded_parcels += len(values)
             print(f"Loaded parcels {loaded_parcels}", flush=True)
 
@@ -565,7 +580,6 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
             values = [(parcel_id, parcel_id, f"{source_type}:{external_id}", parcel_id)
                       for source_type, external_id, parcel_id in batch]
             cursor.executemany(insert_ref, values)
-            connection.commit()
             loaded_refs += len(values)
             print(f"Loaded refs {loaded_refs}", flush=True)
 
