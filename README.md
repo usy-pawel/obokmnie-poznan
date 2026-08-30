@@ -56,7 +56,7 @@ npm run import:data
 
 Importer strumieniowo czyta 18 archiwów GUNB, normalizuje wybrany zakres w lokalnym etapie SQLite i usuwa duplikaty spraw. `OBOKMNIE_PERIOD_START` włącza pełną historię; bez tej zmiennej aktualizowany jest ruchomy ostatni rok i zachowywana jest wcześniejsza historia. Automatyczny przebieg pobiera świeże archiwa po ustawieniu `OBOKMNIE_DOWNLOAD_ARCHIVES=1`.
 
-Przed zmianą widocznych danych importer sprawdza komplet 16 województw, minimalną liczebność, dopuszczalną zmianę względem bieżącej bazy i udział spraw z geometrią. Podejrzany przebieg kończy się błędem bez przełączenia publikacji. Rekordy usunięte ze źródła pozostają w bazie audytowej jako nieaktywne. Istniejące geometrie są ponownie używane bezpośrednio z PostGIS, a ULDK jest wywoływany tylko dla nowych lub brakujących identyfikatorów. Lokalizacji nie wybiera AI.
+Przed zmianą widocznych danych importer sprawdza komplet 16 województw, minimalną liczebność, dopuszczalną zmianę względem bieżącej bazy i udział spraw z geometrią. Podejrzany przebieg kończy się błędem bez przełączenia publikacji. Rekordy usunięte ze źródła pozostają w bazie audytowej jako nieaktywne. Istniejące geometrie oraz potwierdzone braki są ponownie używane bezpośrednio z PostGIS, a ULDK jest wywoływany tylko dla nowych identyfikatorów. Lokalizacji nie wybiera AI.
 
 Dobowy przebieg produkcyjny:
 

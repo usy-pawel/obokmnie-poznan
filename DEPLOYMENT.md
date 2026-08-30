@@ -77,7 +77,7 @@ instancja PostgreSQL została usunięta wraz z pustym wolumenem.
 
 Aktualizacja danych działa jako osobna usługa cykliczna Railway. Po nocnej
 publikacji GUNB pobiera komplet archiwów, aktualizuje ruchome 12 miesięcy,
-ponownie używa geometrii z PostGIS i kończy proces. Kontrole regresji blokują
+ponownie używa dodatnich i negatywnych wyników geometrii z PostGIS i kończy proces. Kontrole regresji blokują
 publikację podejrzanie niepełnego przebiegu; błąd jest zapisany w tabeli
 `imports` i widoczny przez `/api/data-status`. Usługa używa minimalnego obrazu
 `Dockerfile.cron`; nie uruchamia serwera WWW i nie pozostaje aktywna między

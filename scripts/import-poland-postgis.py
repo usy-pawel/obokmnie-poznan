@@ -299,7 +299,7 @@ def seed_legacy_cache(database):
 
 
 def seed_existing_parcels(database):
-    """Use PostGIS as the durable geometry cache and query ULDK only for new ids."""
+    """Use PostGIS as the durable positive and negative cache for parcel lookups."""
     ensure_parcel_cache(database)
     requested = database.execute("""
       SELECT DISTINCT parcel_id FROM source_rows
@@ -313,7 +313,7 @@ def seed_existing_parcels(database):
             for batch in chunks((row[0] for row in requested), 5000):
                 cursor.execute("""
                   SELECT parcel_id FROM parcels
-                  WHERE parcel_id=ANY(%s) AND geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+                  WHERE parcel_id=ANY(%s)
                 """, (batch,))
                 existing = [row[0] for row in cursor]
                 if not existing:
@@ -328,7 +328,7 @@ def seed_existing_parcels(database):
                 reused += len(existing)
     finally:
         connection.close()
-    print(f"Reused {reused} parcel geometries from PostGIS", flush=True)
+    print(f"Reused {reused} parcel lookup results from PostGIS", flush=True)
     return reused
 
 
@@ -653,7 +653,7 @@ def run_import():
     metrics.update(validate_stage(stage, cutoff, newest))
     if not FETCH_ONLY:
         ACTIVE_IMPORT_ID = start_import(cutoff, newest)
-    metrics["parcel_geometries_reused"] = seed_existing_parcels(stage)
+    metrics["parcel_lookup_results_reused"] = seed_existing_parcels(stage)
     if SKIP_ULDK:
         print("Skipping ULDK fallback; unmatched historical parcel ids remain unpublished", flush=True)
     else:
