@@ -67,6 +67,7 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /detail\?\.parcels/);
   assert.match(frontend, /loadCaseContext/);
   assert.match(frontend, /Kontekst jest chwilowo niedostępny/);
+  assert.doesNotMatch(frontend, /W promieniu 250 m|W promieniu 1 km/);
   assert.match(frontend, /loadSuggestions/);
   assert.match(frontend, /aria-activedescendant/);
   assert.match(frontend, /renderProvinceChoices/);

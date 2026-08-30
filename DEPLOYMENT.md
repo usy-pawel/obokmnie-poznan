@@ -20,7 +20,7 @@
 
 Geometrie zostały dopasowane deterministycznie z krajowego GeoParquet EGiB.
 AI nie wybiera lokalizacji ani granic działek.
-AI objaśnia wyłącznie dane wybranej sprawy i jej otoczenia po kliknięciu użytkownika.
+AI objaśnia wyłącznie dane wybranej sprawy i historię tej samej działki po kliknięciu użytkownika.
 
 ## Mapa i API
 

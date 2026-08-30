@@ -612,19 +612,7 @@ button { color: inherit; }
 .context-summary { margin: 12px 0 8px; color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.5; }
 .context-signals, .context-limitations ul { margin: 0; padding-left: 17px; color: #4e605c; font-size: 11px; line-height: 1.5; }
 .context-signals li + li, .context-limitations li + li { margin-top: 5px; }
-.context-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0; }
-.context-stats span {
-  min-width: 0;
-  padding: 8px 6px;
-  border-radius: 8px;
-  background: #fff;
-  color: var(--ink-soft);
-  font-size: 8px;
-  line-height: 1.25;
-  text-align: center;
-}
-.context-stats strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 14px; }
-.context-limitations { border-top: 1px solid #dce2da; padding-top: 9px; }
+.context-limitations { margin-top: 10px; border-top: 1px solid #dce2da; padding-top: 9px; }
 .context-limitations summary { color: var(--ink); cursor: pointer; font-size: 10px; font-weight: 800; }
 .context-limitations ul { margin-top: 8px; }
 .context-disclaimer { margin: 10px 0 0; color: #75817d; font-size: 9px; line-height: 1.4; }

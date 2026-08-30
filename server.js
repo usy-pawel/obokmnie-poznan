@@ -324,29 +324,11 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
     `, [request.params.caseKey]);
     if (!subjectResult.rowCount) return response.status(404).json({ error: 'not_found' });
     const subject = subjectResult.rows[0];
-    const [nearbyResult, relatedResult] = await Promise.all([
-      pool.query(`
-        WITH subject AS (SELECT id, location FROM cases WHERE id=$1)
-        SELECT
-          count(c.id) FILTER (WHERE ST_DWithin(c.location::geography, s.location::geography, 250))::int AS within_250m,
-          count(c.id)::int AS within_1km,
-          count(c.id) FILTER (WHERE c.source_type='wniosek_decyzja')::int AS permits_within_1km,
-          count(c.id) FILTER (WHERE c.source_type='zgloszenie')::int AS notices_within_1km,
-          (SELECT count(DISTINCT related.case_id)::int
-           FROM case_parcels own
-           JOIN case_parcels related ON related.parcel_id=own.parcel_id AND related.case_id<>s.id
-           JOIN cases related_case ON related_case.id=related.case_id AND related_case.published
-           WHERE own.case_id=s.id) AS same_parcel_count
-        FROM subject s
-        LEFT JOIN cases c ON c.published AND c.id<>s.id
-          AND c.location && ST_Expand(s.location, 0.02)
-          AND ST_DWithin(c.location::geography, s.location::geography, 1000)
-        GROUP BY s.id
-      `, [subject.id]),
-      pool.query(`
+    const relatedResult = await pool.query(`
         SELECT related_case.source_type,
                to_char(related_case.received_date,'YYYY-MM-DD') AS received_date,
-               related_case.status, related_case.description
+               related_case.status, related_case.description,
+               count(*) OVER()::int AS same_parcel_count
         FROM cases related_case
         WHERE related_case.published AND related_case.id IN (
           SELECT related.case_id
@@ -356,9 +338,8 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
         )
         ORDER BY related_case.received_date DESC, related_case.id
         LIMIT 5
-      `, [subject.id]),
-    ]);
-    const facts = buildContextFacts(subject, nearbyResult.rows[0] || {}, relatedResult.rows);
+      `, [subject.id]);
+    const facts = buildContextFacts(subject, relatedResult.rows);
     const fingerprint = contextFingerprint(facts);
     const cached = await pool.query(`
       SELECT context, model, generated_at
@@ -368,7 +349,6 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
     if (cached.rowCount) {
       return response.json({
         ...cached.rows[0].context,
-        facts: facts.surroundings,
         generated_by: 'ai',
         cached: true,
         generated_at: cached.rows[0].generated_at,
@@ -377,7 +357,7 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
 
     const fallback = deterministicContext(facts);
     if (!process.env.OPENAI_API_KEY || !canGenerateContext(request)) {
-      return response.json({ ...fallback, facts: facts.surroundings, generated_by: 'rules', cached: false });
+      return response.json({ ...fallback, generated_by: 'rules', cached: false });
     }
 
     let generation = contextInFlight.get(subject.case_key);
@@ -399,10 +379,10 @@ app.get('/api/cases/:caseKey/context', async (request, response, next) => {
     }
     try {
       const context = await generation;
-      return response.json({ ...context, facts: facts.surroundings, generated_by: 'ai', cached: false });
+      return response.json({ ...context, generated_by: 'ai', cached: false });
     } catch (error) {
       console.error('case context generation failed', { caseKey: subject.case_key, message: error.message });
-      return response.json({ ...fallback, facts: facts.surroundings, generated_by: 'rules', cached: false });
+      return response.json({ ...fallback, generated_by: 'rules', cached: false });
     } finally {
       if (contextInFlight.get(subject.case_key) === generation) contextInFlight.delete(subject.case_key);
     }

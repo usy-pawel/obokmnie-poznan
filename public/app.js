@@ -294,23 +294,9 @@ function renderCaseContext(fragment, contextState) {
   fragment.querySelector('.context-summary').textContent = context.summary;
   appendTextItems(fragment.querySelector('.context-signals'), context.signals);
   appendTextItems(fragment.querySelector('.context-limitations ul'), context.limitations);
-  const stats = fragment.querySelector('.context-stats');
-  stats.replaceChildren();
-  const values = [
-    ['Te same działki', context.facts?.other_cases_on_same_parcel || 0],
-    ['W promieniu 250 m', context.facts?.cases_within_250m || 0],
-    ['W promieniu 1 km', context.facts?.cases_within_1km || 0],
-  ];
-  for (const [label, value] of values) {
-    const stat = document.createElement('span');
-    const strong = document.createElement('strong');
-    strong.textContent = Number(value).toLocaleString('pl-PL');
-    stat.append(strong, document.createTextNode(label));
-    stats.append(stat);
-  }
   fragment.querySelector('.context-disclaimer').textContent = context.generated_by === 'ai'
-    ? 'AI objaśnia wyłącznie dane GUNB i statystyki tej mapy. Nie potwierdza realizacji inwestycji.'
-    : 'Podsumowanie powstało bez AI na podstawie danych GUNB i statystyk tej mapy.';
+    ? 'AI objaśnia wyłącznie dane GUNB i historię spraw tej działki. Nie potwierdza realizacji inwestycji.'
+    : 'Podsumowanie powstało bez AI na podstawie danych GUNB i historii spraw tej działki.';
 }
 
 function renderCases() {

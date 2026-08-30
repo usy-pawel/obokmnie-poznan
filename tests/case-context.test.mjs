@@ -23,20 +23,21 @@ const subject = {
   parcel_ids: ['306401_1.0001.1/2'],
 };
 
-test('case context facts are deterministic and distinguish official dates from surroundings', () => {
-  const facts = buildContextFacts(subject, {
-    within_250m: 3,
-    within_1km: 12,
-    permits_within_1km: 9,
-    notices_within_1km: 3,
+test('case context facts are deterministic and distinguish official dates from parcel history', () => {
+  const facts = buildContextFacts(subject, [{
+    source_type: 'zgloszenie',
+    received_date: '2025-12-01',
+    status: 'Brak sprzeciwu',
+    description: 'Sieć',
     same_parcel_count: 1,
-  }, [{ source_type: 'zgloszenie', received_date: '2025-12-01', status: 'Brak sprzeciwu', description: 'Sieć' }]);
+  }]);
   assert.equal(facts.case.days_to_decision, 30);
-  assert.equal(facts.surroundings.other_cases_on_same_parcel, 1);
+  assert.equal(facts.parcel_history.other_cases_on_same_parcel, 1);
   assert.equal(contextFingerprint(facts), contextFingerprint(structuredClone(facts)));
   const fallback = deterministicContext(facts);
   assert.match(fallback.summary, /Budowa budynku mieszkalnego/);
   assert.match(fallback.signals.join(' '), /30 dni/);
+  assert.doesNotMatch(fallback.signals.join(' '), /promieniu|250 m|1 km/i);
   assert.match(fallback.limitations.join(' '), /nie potwierdza/);
 });
 
@@ -53,7 +54,7 @@ test('OpenAI output parser accepts output_text and limits list length', () => {
 });
 
 test('OpenAI request uses Luna, structured output and does not store the response', async () => {
-  const facts = buildContextFacts(subject, {}, []);
+  const facts = buildContextFacts(subject, []);
   let requestBody;
   const generated = await generateAiContext(facts, {
     apiKey: 'test-key-not-a-secret',
