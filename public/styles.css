@@ -282,6 +282,29 @@ button { color: inherit; }
 .filter-button:hover { color: var(--ink); }
 .filter-button.is-active { background: var(--ink); color: #fff; }
 
+.range-control { display: flex; align-items: center; gap: 8px; }
+.range-control > span { color: var(--ink-soft); font-size: 11px; font-weight: 750; }
+.range-group {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 253, 248, 0.8);
+}
+.range-group button {
+  border: 0;
+  border-radius: 7px;
+  padding: 7px 9px;
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+  font-size: 10px;
+  font-weight: 750;
+  white-space: nowrap;
+}
+.range-group button:hover { color: var(--ink); }
+.range-group button.is-active { background: var(--selected); color: var(--ink); }
+
 .toolbar-note {
   display: flex;
   align-items: center;
@@ -395,6 +418,7 @@ button { color: inherit; }
 .legend-cluster { border-radius: 50% !important; background: var(--selected); }
 .legend-permit { background: var(--permit); }
 .legend-notice { background: var(--notice); }
+.legend-history { border: 2px solid #7e8985; background: transparent; opacity: 0.65; }
 
 .zoom-hint {
   position: absolute;
@@ -519,6 +543,9 @@ button { color: inherit; }
 
 .case-card:hover { transform: translateY(-1px); border-color: #bfc3b8; box-shadow: 0 8px 20px rgba(25, 48, 44, 0.08); }
 .case-card.is-selected { border-color: var(--selected); box-shadow: 0 0 0 2px rgba(243, 184, 65, 0.22); }
+.case-card.is-historical { background: #f7f5ef; }
+.case-card.is-historical:not(.is-selected) { border-color: #d9d7cf; }
+.case-card.is-historical .case-title { color: #43514e; }
 
 .case-card-button {
   width: 100%;
@@ -734,6 +761,9 @@ footer {
   .search-wrap { width: 100%; }
   .filter-group { width: 100%; }
   .filter-button { flex: 1; padding-inline: 8px; }
+  .range-control { width: 100%; align-items: flex-start; flex-direction: column; }
+  .range-group { width: 100%; }
+  .range-group button { flex: 1; padding-inline: 6px; }
   .explorer { border-radius: 17px; }
   .map-card { min-height: 455px; }
   .map-loading { top: 13px; right: 52px; padding: 7px; }

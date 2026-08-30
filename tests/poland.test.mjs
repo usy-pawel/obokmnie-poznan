@@ -2,12 +2,13 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, migration, integrityMigration, cityIndexMigration, contextMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/003_data_integrity.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/004_exact_city_index.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/006_case_contexts.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/007_history_range_indexes.sql', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
@@ -29,6 +30,16 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(migrateScript, /pg_advisory_lock/);
   assert.match(contextMigration, /CREATE TABLE IF NOT EXISTS case_contexts/);
   assert.match(contextMigration, /source_fingerprint/);
+  assert.match(historyIndexMigration, /cases_published_received_date_idx/);
+  assert.match(historyIndexMigration, /cases_published_voivodeship_date_idx/);
+  assert.match(importer, /OBOKMNIE_PERIOD_START/);
+  assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
+  assert.match(importer, /Oczekiwano 18 archiwów GUNB/);
+  assert.match(importer, /DELETE FROM case_parcels cp USING cases c/);
+  assert.ok(
+    importer.indexOf('refs = stage.execute') < importer.indexOf('UPDATE cases SET location=NULL,published=false'),
+    'publication should switch only after all historical links are loaded',
+  );
 });
 
 test('API exposes health, overview, search, detail and lazy context routes', () => {
@@ -53,6 +64,9 @@ test('API exposes health, overview, search, detail and lazy context routes', () 
   assert.match(server, /contextInFlight/);
   assert.match(server, /OPENAI_API_KEY/);
   assert.match(server, /other_cases_on_same_parcel|same_parcel_count/);
+  assert.match(server, /DATE_RANGES/);
+  assert.match(server, /make_interval\(months=>/);
+  assert.match(server, /AS historical/);
 });
 
 test('country frontend loads data by viewport and parcel detail on demand', () => {
@@ -79,5 +93,10 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(html, /data-base-layer="streets" aria-pressed="true"/);
   assert.match(html, /role="combobox"/);
   assert.match(html, /Kontekst sprawy i działki/);
+  assert.match(html, /data-range="3y"/);
+  assert.match(html, /data-range="all"/);
+  assert.match(frontend, /range: '1y'/);
+  assert.match(frontend, /params\.set\('range', state\.range\)/);
+  assert.match(frontend, /is-historical/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);
 });

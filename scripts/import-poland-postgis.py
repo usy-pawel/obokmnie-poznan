@@ -35,8 +35,10 @@ FETCH_LIMIT = int(os.environ.get("OBOKMNIE_FETCH_LIMIT", "-1"))
 STAGE_ONLY = os.environ.get("OBOKMNIE_STAGE_ONLY") == "1"
 REUSE_STAGE = os.environ.get("OBOKMNIE_REUSE_STAGE") == "1"
 PERIOD_END = os.environ.get("OBOKMNIE_PERIOD_END")
+PERIOD_START = os.environ.get("OBOKMNIE_PERIOD_START")
 RETRY_ERRORS = os.environ.get("OBOKMNIE_RETRY_ERRORS") == "1"
 FETCH_ONLY = os.environ.get("OBOKMNIE_FETCH_ONLY") == "1"
+SKIP_ULDK = os.environ.get("OBOKMNIE_SKIP_ULDK") == "1"
 POLAND_BOUNDS = (14.0, 48.8, 24.3, 55.3)
 THREAD_LOCAL = threading.local()
 
@@ -142,14 +144,12 @@ def normalize(row, source_type, fallback_voivodeship):
 def source_archives():
     archives = []
     for path in sorted(ZIP_DIR.glob("*.zip")):
-        if "zgloszenia_2016_2021" in path.name:
-            continue
         source_type = "zgloszenie" if "zgloszenia" in path.name else "wniosek_decyzja"
         province = path.stem.removeprefix("wynik_").replace("-", " ") if source_type == "wniosek_decyzja" else ""
         date_field = "data_wplywu_wniosku_do_urzedu" if source_type == "zgloszenie" else "data_wplywu_wniosku"
         archives.append((path, source_type, province, date_field))
-    if len(archives) != 17:
-        raise RuntimeError(f"Oczekiwano 17 bieżących archiwów, znaleziono {len(archives)}")
+    if len(archives) != 18:
+        raise RuntimeError(f"Oczekiwano 18 archiwów GUNB, znaleziono {len(archives)}")
     return archives
 
 
@@ -374,7 +374,6 @@ def load_postgres(stage, metrics, cutoff, newest):
         )
         import_id = cursor.fetchone()[0]
         connection.commit()
-        cursor.execute("UPDATE cases SET published=false")
         cases = stage.execute("SELECT * FROM staged_cases ORDER BY source_type, external_id")
         upsert_case = """
           INSERT INTO cases(case_key,source_type,external_id,received_date,decision_date,status,office,
@@ -417,7 +416,6 @@ def load_postgres(stage, metrics, cutoff, newest):
             loaded_parcels += len(values)
             print(f"Loaded parcels {loaded_parcels}", flush=True)
 
-        cursor.execute("TRUNCATE case_parcels")
         refs = stage.execute("SELECT DISTINCT source_type,external_id,parcel_id FROM source_rows WHERE parcel_id<>''")
         insert_ref = """
           INSERT INTO case_parcels(case_id,parcel_id)
@@ -434,6 +432,16 @@ def load_postgres(stage, metrics, cutoff, newest):
             loaded_refs += len(values)
             print(f"Loaded refs {loaded_refs}", flush=True)
 
+        cursor.execute("""
+          DELETE FROM case_parcels cp USING cases c
+          WHERE cp.case_id=c.id
+            AND c.received_date BETWEEN %s AND %s
+            AND NOT (cp.parcel_id=ANY(c.parcel_ids))
+        """, (cutoff, newest))
+        cursor.execute(
+            "UPDATE cases SET location=NULL,published=false WHERE received_date BETWEEN %s AND %s",
+            (cutoff, newest),
+        )
         cursor.execute("""
           UPDATE cases c SET location=s.location,published=true
           FROM (
@@ -479,7 +487,11 @@ def main():
                     newest = current
     if newest is None:
         raise RuntimeError("Brak dat w źródłach")
-    cutoff = subtract_year(newest)
+    cutoff = parse_date(PERIOD_START) if PERIOD_START else subtract_year(newest)
+    if cutoff is None:
+        raise RuntimeError(f"Nieprawidłowy OBOKMNIE_PERIOD_START: {PERIOD_START}")
+    if cutoff > newest:
+        raise RuntimeError("Początek zakresu importu jest późniejszy niż jego koniec")
     print(f"Analysis period: {cutoff}..{newest}", flush=True)
     stage = open_stage()
     has_stage = stage.execute(
@@ -501,7 +513,10 @@ def main():
         metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
         return
-    fetch_missing_parcels(stage)
+    if SKIP_ULDK:
+        print("Skipping ULDK fallback; unmatched historical parcel ids remain unpublished", flush=True)
+    else:
+        fetch_missing_parcels(stage)
     if FETCH_ONLY:
         metrics["parcel_cache_rows"] = stage.execute("SELECT count(*) FROM parcel_cache").fetchone()[0]
         metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)

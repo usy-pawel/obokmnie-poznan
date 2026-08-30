@@ -15,6 +15,11 @@ assert.equal(health.database, true);
 const meta = await get('/api/meta');
 assert.ok(meta.published_cases > 0, 'no published cases');
 assert.ok(meta.voivodeships > 0, 'no voivodeships');
+assert.equal(meta.range, '1y');
+
+const historicalMeta = await get('/api/meta?range=all');
+assert.equal(historicalMeta.range, 'all');
+assert.ok(historicalMeta.published_cases >= meta.published_cases, 'historical range is smaller than default');
 
 const suggestions = await get('/api/suggestions?q=poz');
 assert.ok(suggestions.length > 0 && suggestions.length <= 7, 'invalid suggestion count');
@@ -27,6 +32,9 @@ assert.equal(overview.features.length, 16, 'country map should show 16 voivodesh
 assert.ok(overview.features.every((feature) => feature.properties.cluster === true));
 assert.ok(overview.features.every((feature) => feature.properties.cluster_scope === 'voivodeship'));
 assert.ok(overview.features.every((feature) => feature.properties.label && feature.properties.bounds.length === 4));
+
+const historicalOverview = await get('/api/map?bbox=14,48.8,24.3,55.3&zoom=6&range=all');
+assert.equal(historicalOverview.features.length, 16, 'historical country map should show 16 voivodeships');
 
 const wielkopolskie = overview.features.find((feature) => feature.properties.region === 'wielkopolskie');
 assert.ok(wielkopolskie, 'Wielkopolskie is missing from country overview');
@@ -58,6 +66,7 @@ assert.ok(detail.parcels.length > 0, 'selected case has no parcel geometry');
 
 console.log(JSON.stringify({
   published_cases: meta.published_cases,
+  historical_cases: historicalMeta.published_cases,
   voivodeships: meta.voivodeships,
   country_clusters: overview.features.length,
   wielkopolska_areas: provinceAreas.features.length,

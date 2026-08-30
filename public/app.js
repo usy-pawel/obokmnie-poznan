@@ -1,11 +1,18 @@
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
 const LIST_SIZE = 80;
+const RANGE_COPY = {
+  '1y': 'ostatnich 12 miesięcy',
+  '3y': 'ostatnich 3 lat',
+  '5y': 'ostatnich 5 lat',
+  all: 'całej historii od 2016 roku',
+};
 
 const state = {
   map: null,
   features: [],
   filter: 'all',
+  range: '1y',
   query: '',
   region: null,
   selectedCaseKey: null,
@@ -30,6 +37,7 @@ const ui = {
   loading: document.querySelector('#map-loading'),
   template: document.querySelector('#case-card-template'),
   filters: [...document.querySelectorAll('[data-filter]')],
+  rangeButtons: [...document.querySelectorAll('[data-range]')],
   search: document.querySelector('#search-input'),
   searchWrap: document.querySelector('.search-wrap'),
   suggestions: document.querySelector('#search-suggestions'),
@@ -42,6 +50,7 @@ const ui = {
   baseLayerButtons: [...document.querySelectorAll('[data-base-layer]')],
   zoomHint: document.querySelector('#zoom-hint'),
   dataRange: document.querySelector('#data-range'),
+  heroLead: document.querySelector('#hero-lead'),
 };
 
 function emptyCollection() {
@@ -132,7 +141,7 @@ async function loadSuggestions(query) {
   }
   state.suggestionController = new AbortController();
   try {
-    const response = await fetch(`/api/suggestions?q=${encodeURIComponent(query)}`, {
+    const response = await fetch(`/api/suggestions?q=${encodeURIComponent(query)}&range=${state.range}`, {
       signal: state.suggestionController.signal,
     });
     if (!response.ok) throw new Error(`API ${response.status}`);
@@ -328,7 +337,9 @@ function renderCases() {
   } else if (state.query) {
     ui.listNote.textContent = `Sprawy widoczne na mapie dla: „${state.query}”.`;
   } else {
-    ui.listNote.textContent = 'Najnowsze sprawy w widocznym obszarze mapy.';
+    ui.listNote.textContent = state.range === '1y'
+      ? 'Najnowsze sprawy w widocznym obszarze mapy.'
+      : 'Sprawy z wybranego okresu w widocznym obszarze mapy.';
   }
 
   for (const feature of displayed) {
@@ -342,9 +353,10 @@ function renderCases() {
     const detail = selected ? state.selectedDetail : null;
     card.dataset.caseId = key;
     card.classList.toggle('is-notice', item.source_type === 'zgloszenie');
+    card.classList.toggle('is-historical', Boolean(item.historical));
     card.classList.toggle('is-selected', selected);
     details.hidden = !selected;
-    fragment.querySelector('.case-type').textContent = typeLabel(item);
+    fragment.querySelector('.case-type').textContent = `${typeLabel(item)}${item.historical ? ' · historia' : ''}`;
     fragment.querySelector('.case-date').textContent = formatDate(item.received_date);
     const title = shortTitle(item.description) || 'Sprawa budowlana';
     fragment.querySelector('.case-title').textContent = title;
@@ -430,6 +442,7 @@ async function loadMapData() {
   if (state.filter !== 'all') params.set('type', state.filter);
   if (state.query) params.set('q', state.query);
   if (state.region) params.set('region', state.region);
+  params.set('range', state.range);
   ui.loading.classList.remove('is-hidden');
   ui.loading.setAttribute('aria-hidden', 'false');
   try {
@@ -530,10 +543,11 @@ async function selectCase(key, options = {}) {
 }
 
 async function loadMeta() {
-  const response = await fetch('/api/meta');
+  const response = await fetch(`/api/meta?range=${state.range}`);
   if (!response.ok) throw new Error('Brak metadanych');
   const meta = await response.json();
   ui.heroCount.textContent = Number(meta.published_cases || 0).toLocaleString('pl-PL');
+  ui.heroLead.textContent = `Sprawdź sprawy budowlane z ${RANGE_COPY[state.range]}. Przybliż mapę, aby zobaczyć dokładne granice działek, albo wyszukaj ulicę, inwestycję czy numer sprawy.`;
   if (meta.period_start && meta.period_end) {
     ui.dataRange.innerHTML = `<span></span>Dane: ${formatNumericDate(meta.period_start)}–${formatNumericDate(meta.period_end)}`;
   }
@@ -581,7 +595,13 @@ function initializeMap() {
     });
     state.map.addLayer({
       id: 'case-points', type: 'circle', source: 'cases', filter: ['!=', ['get', 'cluster'], true],
-      paint: { 'circle-color': ['match', ['get', 'source_type'], 'zgloszenie', '#347c6c', '#e26948'], 'circle-radius': 7, 'circle-stroke-color': '#fffdf8', 'circle-stroke-width': 2 },
+      paint: {
+        'circle-color': ['match', ['get', 'source_type'], 'zgloszenie', '#347c6c', '#e26948'],
+        'circle-opacity': ['case', ['boolean', ['get', 'historical'], false], 0.48, 1],
+        'circle-radius': ['case', ['boolean', ['get', 'historical'], false], 5, 7],
+        'circle-stroke-color': '#fffdf8',
+        'circle-stroke-width': 2,
+      },
     });
     state.map.addLayer({ id: 'selected-fill', type: 'fill', source: 'selected-parcels', paint: { 'fill-color': '#f3b841', 'fill-opacity': 0.34 } });
     state.map.addLayer({ id: 'selected-line', type: 'line', source: 'selected-parcels', paint: { 'line-color': '#152c2a', 'line-width': 3 } });
@@ -613,6 +633,19 @@ ui.filters.forEach((button) => button.addEventListener('click', () => {
   state.filter = button.dataset.filter;
   state.listLimit = LIST_SIZE;
   ui.filters.forEach((item) => item.classList.toggle('is-active', item === button));
+  scheduleMapData(0);
+}));
+
+ui.rangeButtons.forEach((button) => button.addEventListener('click', () => {
+  state.range = button.dataset.range;
+  state.lastFittedQuery = '';
+  state.listLimit = LIST_SIZE;
+  ui.rangeButtons.forEach((item) => {
+    const active = item === button;
+    item.classList.toggle('is-active', active);
+    item.setAttribute('aria-pressed', String(active));
+  });
+  void loadMeta();
   scheduleMapData(0);
 }));
 

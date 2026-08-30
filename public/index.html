@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=polska-5" />
+    <link rel="stylesheet" href="/styles.css?v=polska-6" />
   </head>
   <body>
     <div class="page-shell">
@@ -32,7 +32,7 @@
           <div class="hero-copy">
             <p class="eyebrow">Publiczne dane, po ludzku</p>
             <h1 id="page-title">Co budują<br /><em>w Polsce?</em></h1>
-            <p class="hero-lead">
+            <p class="hero-lead" id="hero-lead">
               Sprawdź sprawy budowlane z ostatnich 12 miesięcy. Przybliż mapę, aby zobaczyć
               dokładne granice działek, albo wyszukaj ulicę, inwestycję czy numer sprawy.
             </p>
@@ -66,6 +66,15 @@
             <button class="filter-button" type="button" data-filter="wniosek_decyzja">Pozwolenia</button>
             <button class="filter-button" type="button" data-filter="zgloszenie">Zgłoszenia</button>
           </div>
+          <div class="range-control">
+            <span>Okres</span>
+            <div class="range-group" role="group" aria-label="Zakres historii">
+              <button class="is-active" type="button" data-range="1y" aria-pressed="true">12 mies.</button>
+              <button type="button" data-range="3y" aria-pressed="false">3 lata</button>
+              <button type="button" data-range="5y" aria-pressed="false">5 lat</button>
+              <button type="button" data-range="all" aria-pressed="false">Od 2016</button>
+            </div>
+          </div>
           <p class="toolbar-note" id="data-range"><span></span>Dane: ostatnie 12 miesięcy</p>
         </section>
 
@@ -84,6 +93,7 @@
               <span><i class="legend-cluster"></i>Grupa spraw</span>
               <span><i class="legend-permit"></i>Pozwolenie</span>
               <span><i class="legend-notice"></i>Zgłoszenie</span>
+              <span><i class="legend-history"></i>Historia</span>
             </div>
             <p class="zoom-hint" id="zoom-hint">Przybliż mapę, aby zobaczyć granice działek</p>
           </div>
@@ -177,6 +187,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-12"></script>
+    <script type="module" src="/app.js?v=polska-13"></script>
   </body>
 </html>

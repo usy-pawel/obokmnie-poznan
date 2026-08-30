@@ -4,10 +4,11 @@ Publiczna mapa dokładnie zlokalizowanych spraw budowlanych z całej Polski. Wid
 
 ## Dane
 
-- okres: ostatnie 12 miesięcy według najnowszego wpisu w źródłach,
-- 193 161 unikalnych spraw w bieżącym imporcie,
-- 175 385 spraw z dokładną geometrią, obejmujących wszystkie 16 województw,
-- 406 495 unikalnych identyfikatorów działek do weryfikacji,
+- dane w bazie: pełna historia od 2016 roku; domyślny widok mapy: ostatnie 12 miesięcy,
+- 3 209 564 unikalne sprawy w pełnym imporcie,
+- 2 581 496 spraw z dokładną geometrią, obejmujących wszystkie 16 województw,
+- 4 944 868 unikalnych identyfikatorów działek do weryfikacji; 3 827 686 ma użyteczną geometrię,
+- widoki na żądanie: 175 361 spraw z 12 miesięcy, 601 888 z 3 lat i 1 053 188 z 5 lat,
 - publikowane są wyłącznie sprawy z co najmniej jedną dokładnie potwierdzoną geometrią działki,
 - źródła: GUNB RWDZ, GUGiK ULDK, bezpłatna ortofotomapa WMTS oraz OpenStreetMap/OpenFreeMap.
 
@@ -27,6 +28,14 @@ npm run migrate
 npm start
 ```
 
+Pełny import historii:
+
+```powershell
+$env:OBOKMNIE_PERIOD_START='2016-01-01'
+$env:OBOKMNIE_SKIP_ULDK='1'
+python scripts/import-poland-postgis.py
+```
+
 Strona będzie dostępna pod `http://localhost:3000`, a stan usługi pod `/health`.
 
 ## Lokalne CI
@@ -44,13 +53,16 @@ npm run import:egib
 npm run import:data
 ```
 
-Importer strumieniowo czyta 17 bieżących archiwów GUNB, normalizuje ostatnie 12 miesięcy w lokalnym etapie SQLite i usuwa duplikaty spraw. Geometrie są najpierw łączone zbiorczo z oficjalnym krajowym GeoParquet EGiB, a ULDK pozostaje awaryjnym źródłem dla brakujących identyfikatorów. Wyniki trafiają do wznawialnego cache w `.cache/`, a następnie do PostGIS. Lokalizacji nie wybiera AI.
+Importer strumieniowo czyta 18 archiwów GUNB, normalizuje wybrany zakres w lokalnym etapie SQLite i usuwa duplikaty spraw. `OBOKMNIE_PERIOD_START` włącza pełną historię; bez tej zmiennej aktualizowany jest ostatni rok bez usuwania wcześniejszych relacji. Geometrie są najpierw łączone zbiorczo z oficjalnym krajowym GeoParquet EGiB, a ULDK pozostaje awaryjnym źródłem dla brakujących identyfikatorów. Wyniki trafiają do wznawialnego cache w `.cache/`, a następnie do PostGIS. Lokalizacji nie wybiera AI.
+
+Pełny import wykonany 30 sierpnia 2026 trwał 7 049 sekund. Baza po imporcie zajmuje 12 181 965 971 bajtów, czyli około 11,35 GiB.
 
 ## Architektura
 
 - statyczny HTML, CSS i JavaScript obsługiwany przez Express,
 - PostgreSQL/PostGIS jako baza spraw, działek i relacji,
 - lekkie agregaty przestrzenne dla widoku kraju i zapytania po obszarze dla większego zbliżenia,
+- zakres mapy wybierany na żądanie: 12 miesięcy, 3 lata, 5 lat albo pełna historia od 2016 roku,
 - MapLibre GL JS i OpenFreeMap Positron,
 - przełączany podkład ortofotomapy GUGiK bez klucza API,
 - kontekst sprawy generowany dopiero po jej otwarciu z danych GUNB i historii tej samej działki,

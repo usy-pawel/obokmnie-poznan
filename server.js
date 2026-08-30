@@ -15,6 +15,12 @@ const VOIVODESHIPS = new Set([
   'mazowieckie', 'opolskie', 'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
   'świętokrzyskie', 'warmińsko-mazurskie', 'wielkopolskie', 'zachodniopomorskie',
 ]);
+const DATE_RANGES = new Map([
+  ['1y', 12],
+  ['3y', 36],
+  ['5y', 60],
+  ['all', null],
+]);
 const pool = process.env.DATABASE_URL
   ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }, max: 10 })
   : null;
@@ -45,6 +51,11 @@ function canGenerateContext(request) {
   return true;
 }
 
+function selectedDateRange(value) {
+  const key = DATE_RANGES.has(value) ? value : '1y';
+  return { key, months: DATE_RANGES.get(key) };
+}
+
 app.disable('x-powered-by');
 app.use(compression());
 app.use(express.static('public', { maxAge: '1h', etag: true }));
@@ -58,16 +69,23 @@ app.get('/health', async (_request, response) => {
   }
 });
 
-app.get('/api/meta', async (_request, response, next) => {
+app.get('/api/meta', async (request, response, next) => {
   try {
+    const range = selectedDateRange(request.query.range);
     const result = await pool.query(`
+      WITH bounds AS (
+        SELECT max(received_date) AS period_end FROM cases WHERE published
+      )
       SELECT count(*)::int AS published_cases,
-             to_char(min(received_date),'YYYY-MM-DD') AS period_start,
-             to_char(max(received_date),'YYYY-MM-DD') AS period_end,
-             count(DISTINCT voivodeship)::int AS voivodeships
-      FROM cases WHERE published
-    `);
-    response.json(result.rows[0]);
+             to_char(min(c.received_date),'YYYY-MM-DD') AS period_start,
+             to_char(bounds.period_end,'YYYY-MM-DD') AS period_end,
+             count(DISTINCT c.voivodeship)::int AS voivodeships
+      FROM cases c CROSS JOIN bounds
+      WHERE c.published
+        AND ($1::int IS NULL OR c.received_date >= bounds.period_end - make_interval(months=>$1))
+      GROUP BY bounds.period_end
+    `, [range.months]);
+    response.json({ ...result.rows[0], range: range.key });
   } catch (error) { next(error); }
 });
 
@@ -80,7 +98,8 @@ app.get('/api/map', async (request, response, next) => {
     const query = String(request.query.q || '').trim();
     const requestedRegion = String(request.query.region || '').trim().toLocaleLowerCase('pl-PL');
     const region = VOIVODESHIPS.has(requestedRegion) ? requestedRegion : null;
-    const params = [...bbox, type, query || null, region];
+    const range = selectedDateRange(request.query.range);
+    const params = [...bbox, type, query || null, region, range.months];
     if (zoom < 7.5 && !query && !region) {
       const result = await pool.query(`
         SELECT voivodeship,
@@ -93,9 +112,10 @@ app.get('/api/map', async (request, response, next) => {
         WHERE published AND location && ST_MakeEnvelope($1,$2,$3,$4,4326)
           AND ($5::text IS NULL OR source_type=$5)
           AND ($6::text IS NULL OR voivodeship=$6)
+          AND ($7::int IS NULL OR received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$7))
         GROUP BY voivodeship
         ORDER BY voivodeship
-      `, [...params.slice(0, 5), region]);
+      `, [...params.slice(0, 5), region, range.months]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
         type: 'Feature',
         geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
@@ -116,6 +136,7 @@ app.get('/api/map', async (request, response, next) => {
           FROM cases
           WHERE published AND voivodeship=$2
             AND ($1::text IS NULL OR source_type=$1)
+            AND ($3::int IS NULL OR received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$3))
         )
         SELECT area_id,
                ST_X(ST_Centroid(ST_Collect(location))) AS lng,
@@ -126,7 +147,7 @@ app.get('/api/map', async (request, response, next) => {
         FROM clustered
         GROUP BY area_id
         ORDER BY area_id
-      `, [type, region]);
+      `, [type, region, range.months]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
         type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
         properties: {
@@ -145,6 +166,7 @@ app.get('/api/map', async (request, response, next) => {
           WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
             AND ($5::text IS NULL OR c.source_type=$5)
             AND ($6::text IS NULL OR c.voivodeship=$6)
+            AND ($7::int IS NULL OR c.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$7))
           GROUP BY c.id, c.location
         )
         SELECT powiat AS label,
@@ -156,7 +178,7 @@ app.get('/api/map', async (request, response, next) => {
         FROM scoped
         GROUP BY powiat
         LIMIT 5000
-      `, [...params.slice(0, 5), region]);
+      `, [...params.slice(0, 5), region, range.months]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
         type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
         properties: {
@@ -173,6 +195,7 @@ app.get('/api/map', async (request, response, next) => {
           WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
             AND ($5::text IS NULL OR c.source_type=$5)
             AND ($6::text IS NULL OR c.voivodeship=$6)
+            AND ($7::int IS NULL OR c.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$7))
         )
         SELECT group_id,
                ST_X(ST_Centroid(ST_Collect(location))) AS lng,
@@ -183,7 +206,7 @@ app.get('/api/map', async (request, response, next) => {
         FROM clustered
         GROUP BY group_id
         ORDER BY group_id
-      `, [...params.slice(0, 5), region]);
+      `, [...params.slice(0, 5), region, range.months]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
         type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
         properties: {
@@ -198,11 +221,13 @@ app.get('/api/map', async (request, response, next) => {
         SELECT EXISTS (
           SELECT 1 FROM cases city_case
           WHERE city_case.published AND lower(city_case.city)=lower($6)
+            AND ($8::int IS NULL OR city_case.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$8))
         ) AS found
       )
       SELECT c.case_key, c.external_id, c.source_type,
              to_char(c.received_date,'YYYY-MM-DD') AS received_date, c.status,
              c.city, c.address, c.description, c.voivodeship,
+             c.received_date < (SELECT max(received_date) FROM cases WHERE published) - interval '1 year' AS historical,
              ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
              (SELECT count(*)::int
               FROM case_parcels cp JOIN parcels p ON p.parcel_id=cp.parcel_id
@@ -211,6 +236,7 @@ app.get('/api/map', async (request, response, next) => {
       WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
         AND ($5::text IS NULL OR c.source_type=$5)
         AND ($7::text IS NULL OR c.voivodeship=$7)
+        AND ($8::int IS NULL OR c.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$8))
         AND ($6::text IS NULL
           OR (exact_city.found AND lower(c.city)=lower($6))
           OR (NOT exact_city.found AND (c.search_vector @@ plainto_tsquery('simple',$6)
@@ -229,29 +255,33 @@ app.get('/api/search', async (request, response, next) => {
   try {
     const query = String(request.query.q || '').trim();
     if (query.length < 2) return response.json([]);
+    const range = selectedDateRange(request.query.range);
     const result = await pool.query(`
       WITH exact_city AS (
         SELECT EXISTS (
           SELECT 1 FROM cases city_case
           WHERE city_case.published AND lower(city_case.city)=lower($1)
+            AND ($2::int IS NULL OR city_case.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$2))
         ) AS found
       )
       SELECT c.case_key, c.external_id, c.source_type,
              to_char(c.received_date,'YYYY-MM-DD') AS received_date, c.status,
              c.city, c.address, c.description, c.voivodeship,
+             c.received_date < (SELECT max(received_date) FROM cases WHERE published) - interval '1 year' AS historical,
              ST_X(c.location) AS lng, ST_Y(c.location) AS lat,
              (SELECT count(*)::int
               FROM case_parcels cp JOIN parcels p ON p.parcel_id=cp.parcel_id
               WHERE cp.case_id=c.id AND p.geom IS NOT NULL AND NOT ST_IsEmpty(p.geom)) AS parcel_count
       FROM cases c CROSS JOIN exact_city
       WHERE c.published
+        AND ($2::int IS NULL OR c.received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$2))
         AND ((exact_city.found AND lower(c.city)=lower($1))
           OR (NOT exact_city.found AND (c.search_vector @@ plainto_tsquery('simple',$1)
             OR c.city ILIKE '%'||$1||'%' OR c.address ILIKE '%'||$1||'%'
             OR c.external_id ILIKE '%'||$1||'%' OR c.voivodeship ILIKE '%'||$1||'%'
             OR c.description ILIKE '%'||$1||'%')))
       ORDER BY c.received_date DESC LIMIT 100
-    `, [query]);
+    `, [query, range.months]);
     response.json(result.rows);
   } catch (error) { next(error); }
 });
@@ -261,6 +291,7 @@ app.get('/api/suggestions', async (request, response, next) => {
     const query = String(request.query.q || '').trim().slice(0, 80)
       .replace(/[^\p{L}\p{N}\s-]/gu, '');
     if (query.length < 2) return response.json([]);
+    const range = selectedDateRange(request.query.range);
     const result = await pool.query(`
       SELECT label, context, kind
       FROM (
@@ -273,6 +304,7 @@ app.get('/api/suggestions', async (request, response, next) => {
                1 AS kind_order
         FROM cases
         WHERE published AND city<>'' AND lower(city) LIKE lower($1)||'%'
+          AND ($2::int IS NULL OR received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$2))
         GROUP BY city
         UNION ALL
         SELECT voivodeship AS label, 'województwo' AS context, 'voivodeship' AS kind,
@@ -281,11 +313,12 @@ app.get('/api/suggestions', async (request, response, next) => {
                0 AS kind_order
         FROM cases
         WHERE published AND voivodeship<>'' AND lower(voivodeship) LIKE lower($1)||'%'
+          AND ($2::int IS NULL OR received_date >= (SELECT max(received_date) FROM cases WHERE published) - make_interval(months=>$2))
         GROUP BY voivodeship
       ) suggestions
       ORDER BY exact_match DESC, kind_order, frequency DESC, label
       LIMIT 7
-    `, [query]);
+    `, [query, range.months]);
     response.json(result.rows);
   } catch (error) { next(error); }
 });
