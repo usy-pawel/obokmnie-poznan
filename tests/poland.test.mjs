@@ -43,7 +43,7 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
 });
 
 test('API exposes health, overview, search, detail and lazy context routes', () => {
-  for (const route of ['/health', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
+  for (const route of ['/health', '/api/data-status', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
@@ -67,6 +67,10 @@ test('API exposes health, overview, search, detail and lazy context routes', () 
   assert.match(server, /DATE_RANGES/);
   assert.match(server, /make_interval\(months=>/);
   assert.match(server, /AS historical/);
+  assert.match(server, /interval '48 hours'/);
+  assert.match(importer, /seed_existing_parcels/);
+  assert.match(importer, /source_active=false/);
+  assert.match(importer, /validate_publication/);
 });
 
 test('country frontend loads data by viewport and parcel detail on demand', () => {

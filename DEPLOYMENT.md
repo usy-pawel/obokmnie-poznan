@@ -35,6 +35,7 @@ wyszukiwanie, szczegóły sprawy i bezpłatna ortofotomapa GUGiK.
 Endpointy produkcyjne:
 
 - `/health`
+- `/api/data-status` — jawny stan ostatniego importu: zdrowy, w toku, nieaktualny albo błąd
 - `/api/meta`
 - `/api/map`
 - `/api/search`
@@ -73,3 +74,9 @@ województwa oraz pełne szczegóły i kontekst starszej sprawy.
 
 Aplikacja korzysta z PostGIS przez prywatną sieć Railway. Nieużywana, zapasowa
 instancja PostgreSQL została usunięta wraz z pustym wolumenem.
+
+Aktualizacja danych działa jako osobna usługa cykliczna Railway. Po nocnej
+publikacji GUNB pobiera komplet archiwów, aktualizuje ruchome 12 miesięcy,
+ponownie używa geometrii z PostGIS i kończy proces. Kontrole regresji blokują
+publikację podejrzanie niepełnego przebiegu; błąd jest zapisany w tabeli
+`imports` i widoczny przez `/api/data-status`.

@@ -36,7 +36,8 @@ $env:OBOKMNIE_SKIP_ULDK='1'
 python scripts/import-poland-postgis.py
 ```
 
-Strona będzie dostępna pod `http://localhost:3000`, a stan usługi pod `/health`.
+Strona będzie dostępna pod `http://localhost:3000`, stan usługi pod `/health`,
+a stan ostatniej aktualizacji danych pod `/api/data-status`.
 
 ## Lokalne CI
 
@@ -53,7 +54,18 @@ npm run import:egib
 npm run import:data
 ```
 
-Importer strumieniowo czyta 18 archiwów GUNB, normalizuje wybrany zakres w lokalnym etapie SQLite i usuwa duplikaty spraw. `OBOKMNIE_PERIOD_START` włącza pełną historię; bez tej zmiennej aktualizowany jest ostatni rok bez usuwania wcześniejszych relacji. Geometrie są najpierw łączone zbiorczo z oficjalnym krajowym GeoParquet EGiB, a ULDK pozostaje awaryjnym źródłem dla brakujących identyfikatorów. Wyniki trafiają do wznawialnego cache w `.cache/`, a następnie do PostGIS. Lokalizacji nie wybiera AI.
+Importer strumieniowo czyta 18 archiwów GUNB, normalizuje wybrany zakres w lokalnym etapie SQLite i usuwa duplikaty spraw. `OBOKMNIE_PERIOD_START` włącza pełną historię; bez tej zmiennej aktualizowany jest ruchomy ostatni rok i zachowywana jest wcześniejsza historia. Automatyczny przebieg pobiera świeże archiwa po ustawieniu `OBOKMNIE_DOWNLOAD_ARCHIVES=1`.
+
+Przed zmianą widocznych danych importer sprawdza komplet 16 województw, minimalną liczebność, dopuszczalną zmianę względem bieżącej bazy i udział spraw z geometrią. Podejrzany przebieg kończy się błędem bez przełączenia publikacji. Rekordy usunięte ze źródła pozostają w bazie audytowej jako nieaktywne. Istniejące geometrie są ponownie używane bezpośrednio z PostGIS, a ULDK jest wywoływany tylko dla nowych lub brakujących identyfikatorów. Lokalizacji nie wybiera AI.
+
+Dobowy przebieg produkcyjny:
+
+```powershell
+$env:OBOKMNIE_DOWNLOAD_ARCHIVES='1'
+$env:OBOKMNIE_ZIP_DIR='.cache/gunb-zips'
+$env:OBOKMNIE_STAGE='.cache/daily-stage.sqlite'
+npm run update:data
+```
 
 Pełny import wykonany 30 sierpnia 2026 trwał 7 049 sekund. Baza po imporcie zajmuje 12 181 965 971 bajtów, czyli około 11,35 GiB.
 

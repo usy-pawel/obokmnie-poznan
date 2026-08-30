@@ -31,6 +31,13 @@ class ImporterTests(unittest.TestCase):
     def test_subtract_year_handles_leap_day(self):
         self.assertEqual(str(IMPORTER.subtract_year(IMPORTER.date(2024, 2, 29))), "2023-02-28")
 
+    def test_publication_validation_rejects_large_drop(self):
+        with self.assertRaisesRegex(RuntimeError, "Walidacja publikacji"):
+            IMPORTER.validate_publication(1000, 200, 800)
+
+    def test_publication_validation_accepts_stable_result(self):
+        IMPORTER.validate_publication(1000, 700, 800)
+
 
 if __name__ == "__main__":
     unittest.main()

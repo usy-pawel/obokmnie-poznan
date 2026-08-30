@@ -39,8 +39,14 @@ PERIOD_START = os.environ.get("OBOKMNIE_PERIOD_START")
 RETRY_ERRORS = os.environ.get("OBOKMNIE_RETRY_ERRORS") == "1"
 FETCH_ONLY = os.environ.get("OBOKMNIE_FETCH_ONLY") == "1"
 SKIP_ULDK = os.environ.get("OBOKMNIE_SKIP_ULDK") == "1"
+DOWNLOAD_ARCHIVES = os.environ.get("OBOKMNIE_DOWNLOAD_ARCHIVES") == "1"
+MIN_STAGE_CASES = int(os.environ.get("OBOKMNIE_MIN_STAGE_CASES", "100000"))
+MIN_STAGE_RATIO = float(os.environ.get("OBOKMNIE_MIN_STAGE_RATIO", "0.75"))
+MAX_STAGE_RATIO = float(os.environ.get("OBOKMNIE_MAX_STAGE_RATIO", "1.5"))
+MIN_PUBLISHED_RATIO = float(os.environ.get("OBOKMNIE_MIN_PUBLISHED_RATIO", "0.45"))
 POLAND_BOUNDS = (14.0, 48.8, 24.3, 55.3)
 THREAD_LOCAL = threading.local()
+ACTIVE_IMPORT_ID = None
 
 
 def clean(value):
@@ -268,13 +274,17 @@ def fetch_parcel(parcel_id):
             time.sleep(0.4 * (2**attempt))
 
 
-def seed_legacy_cache(database):
+def ensure_parcel_cache(database):
     database.execute("""
       CREATE TABLE IF NOT EXISTS parcel_cache (
         requested_id TEXT PRIMARY KEY, returned_id TEXT, geom_wkt TEXT,
         geometry_json TEXT, datasource TEXT, error TEXT, updated_at TEXT NOT NULL
       )
     """)
+
+
+def seed_legacy_cache(database):
+    ensure_parcel_cache(database)
     if not LEGACY_CACHE.exists() or database.execute("SELECT count(*) FROM parcel_cache").fetchone()[0]:
         return
     legacy = json.loads(LEGACY_CACHE.read_text(encoding="utf-8"))
@@ -286,6 +296,40 @@ def seed_legacy_cache(database):
     database.executemany("INSERT OR REPLACE INTO parcel_cache VALUES (?,?,?,?,?,?,?)", batch)
     database.commit()
     print(f"Seeded {len(batch)} legacy cached parcels", flush=True)
+
+
+def seed_existing_parcels(database):
+    """Use PostGIS as the durable geometry cache and query ULDK only for new ids."""
+    ensure_parcel_cache(database)
+    requested = database.execute("""
+      SELECT DISTINCT parcel_id FROM source_rows
+      WHERE parcel_id <> '' AND parcel_id NOT IN (SELECT requested_id FROM parcel_cache)
+      ORDER BY parcel_id
+    """)
+    connection = postgres_connection()
+    reused = 0
+    try:
+        with connection.cursor() as cursor:
+            for batch in chunks((row[0] for row in requested), 5000):
+                cursor.execute("""
+                  SELECT parcel_id FROM parcels
+                  WHERE parcel_id=ANY(%s) AND geom IS NOT NULL AND NOT ST_IsEmpty(geom)
+                """, (batch,))
+                existing = [row[0] for row in cursor]
+                if not existing:
+                    continue
+                now = datetime.now().isoformat()
+                database.executemany(
+                    "INSERT OR IGNORE INTO parcel_cache VALUES (?,?,?,?,?,?,?)",
+                    [(parcel_id, parcel_id, None, None, "postgis-existing", None, now)
+                     for parcel_id in existing],
+                )
+                database.commit()
+                reused += len(existing)
+    finally:
+        connection.close()
+    print(f"Reused {reused} parcel geometries from PostGIS", flush=True)
+    return reused
 
 
 def fetch_missing_parcels(database):
@@ -364,26 +408,101 @@ def chunks(iterator, size=1000):
         yield batch
 
 
-def load_postgres(stage, metrics, cutoff, newest):
+def start_import(cutoff, newest):
+    connection = postgres_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO imports(source_date,period_start,period_end) VALUES(%s,%s,%s) RETURNING id",
+                (date.today(), cutoff, newest),
+            )
+            import_id = cursor.fetchone()[0]
+        connection.commit()
+        return import_id
+    finally:
+        connection.close()
+
+
+def fail_import(import_id, error):
+    try:
+        connection = postgres_connection()
+        with connection.cursor() as cursor:
+            if import_id is None:
+                cursor.execute("""
+                  INSERT INTO imports(source_date,status,finished_at,error)
+                  VALUES(%s,'failed',now(),%s)
+                """, (date.today(), str(error)[:4000]))
+            else:
+                cursor.execute("""
+                  UPDATE imports SET finished_at=now(),status='failed',error=%s WHERE id=%s
+                """, (str(error)[:4000], import_id))
+        connection.commit()
+        connection.close()
+    except Exception as reporting_error:
+        print(f"Nie udało się zapisać błędu importu: {reporting_error}", flush=True)
+
+
+def validate_stage(stage, cutoff, newest):
+    staged_cases = stage.execute("SELECT count(*) FROM staged_cases").fetchone()[0]
+    staged_provinces = stage.execute(
+        "SELECT count(DISTINCT voivodeship) FROM staged_cases WHERE voivodeship<>''"
+    ).fetchone()[0]
+    if staged_cases < MIN_STAGE_CASES:
+        raise RuntimeError(
+            f"Walidacja źródła: tylko {staged_cases} spraw; minimum to {MIN_STAGE_CASES}"
+        )
+    if staged_provinces != 16:
+        raise RuntimeError(
+            f"Walidacja źródła: dane obejmują {staged_provinces} województw zamiast 16"
+        )
+
+    connection = postgres_connection()
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("""
+              SELECT count(*)::int, count(*) FILTER (WHERE published)::int
+              FROM cases WHERE source_active AND received_date BETWEEN %s AND %s
+            """, (cutoff, newest))
+            existing_cases, existing_published = cursor.fetchone()
+    finally:
+        connection.close()
+    if existing_cases:
+        ratio = staged_cases / existing_cases
+        if ratio < MIN_STAGE_RATIO or ratio > MAX_STAGE_RATIO:
+            raise RuntimeError(
+                f"Walidacja źródła: zmiana liczby spraw {existing_cases} -> {staged_cases} "
+                f"(współczynnik {ratio:.3f}) jest poza zakresem "
+                f"{MIN_STAGE_RATIO:.2f}–{MAX_STAGE_RATIO:.2f}"
+            )
+    return {
+        "baseline_cases": existing_cases,
+        "baseline_published_cases": existing_published,
+        "staged_voivodeships": staged_provinces,
+    }
+
+
+def validate_publication(total_cases, published_cases, baseline_published):
+    required = max(int(total_cases * MIN_PUBLISHED_RATIO), int(baseline_published * 0.75))
+    if published_cases < required:
+        raise RuntimeError(
+            f"Walidacja publikacji: {published_cases} opublikowanych spraw; wymagane co najmniej {required}"
+        )
+
+
+def load_postgres(stage, metrics, cutoff, newest, import_id):
     connection = postgres_connection()
     connection.autocommit = False
     with connection.cursor() as cursor:
-        cursor.execute(
-            "INSERT INTO imports(source_date,period_start,period_end) VALUES(%s,%s,%s) RETURNING id",
-            (date.today(), cutoff, newest),
-        )
-        import_id = cursor.fetchone()[0]
-        connection.commit()
         cases = stage.execute("SELECT * FROM staged_cases ORDER BY source_type, external_id")
         upsert_case = """
           INSERT INTO cases(case_key,source_type,external_id,received_date,decision_date,status,office,
-            voivodeship,city,address,case_kind,description,parcel_ids,updated_at)
-          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+            voivodeship,city,address,case_kind,description,parcel_ids,updated_at,source_active,last_import_id)
+          VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now(),true,%s)
           ON CONFLICT(case_key) DO UPDATE SET received_date=excluded.received_date,
             decision_date=excluded.decision_date,status=excluded.status,office=excluded.office,
             voivodeship=excluded.voivodeship,city=excluded.city,address=excluded.address,
             case_kind=excluded.case_kind,description=excluded.description,parcel_ids=excluded.parcel_ids,
-            updated_at=now()
+            updated_at=now(),source_active=true,last_import_id=excluded.last_import_id
         """
         loaded_cases = 0
         for batch in chunks(cases):
@@ -392,13 +511,16 @@ def load_postgres(stage, metrics, cutoff, newest):
                 source_type, external_id, received, decision, statuses, office, province, city, address, kind, description, parcels = row
                 values.append((f"{source_type}:{external_id}", source_type, external_id, received, decision,
                                statuses.replace(",", ", "), office, province, city, address, kind,
-                               description, json.loads(parcels)))
+                               description, json.loads(parcels), import_id))
             cursor.executemany(upsert_case, values)
             connection.commit()
             loaded_cases += len(values)
             print(f"Loaded cases {loaded_cases}", flush=True)
 
-        parcels = stage.execute("SELECT requested_id,returned_id,geom_wkt,geometry_json,datasource,error FROM parcel_cache")
+        parcels = stage.execute("""
+          SELECT requested_id,returned_id,geom_wkt,geometry_json,datasource,error
+          FROM parcel_cache WHERE datasource<>'postgis-existing' OR datasource IS NULL
+        """)
         upsert_parcel = """
           INSERT INTO parcels(parcel_id,returned_id,geom,datasource,error,updated_at)
           VALUES(%s,%s,CASE WHEN %s::text IS NOT NULL THEN ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_SetSRID(ST_GeomFromText(%s),4326)),3))
@@ -443,6 +565,12 @@ def load_postgres(stage, metrics, cutoff, newest):
             (cutoff, newest),
         )
         cursor.execute("""
+          UPDATE cases SET source_active=false,published=false,updated_at=now()
+          WHERE source_active AND received_date BETWEEN %s AND %s
+            AND last_import_id IS DISTINCT FROM %s
+        """, (cutoff, newest, import_id))
+        inactive_cases = cursor.rowcount
+        cursor.execute("""
           UPDATE cases c SET location=s.location,published=true
           FROM (
             SELECT cp.case_id, ST_PointOnSurface(ST_Collect(p.geom)) AS location
@@ -453,20 +581,25 @@ def load_postgres(stage, metrics, cutoff, newest):
               AND left(cp.parcel_id,2)=voivodeship_teryt_code(source_case.voivodeship)
               AND ST_Within(ST_Centroid(p.geom),ST_MakeEnvelope(14.0,48.8,24.3,55.3,4326))
             GROUP BY cp.case_id
-          ) s WHERE c.id=s.case_id
+          ) s WHERE c.id=s.case_id AND c.source_active
         """)
         cursor.execute("ANALYZE cases")
         cursor.execute("ANALYZE parcels")
         cursor.execute("""
           SELECT count(*)::int, count(*) FILTER (WHERE published)::int,
                  count(DISTINCT voivodeship)::int FROM cases
-          WHERE received_date BETWEEN %s AND %s
+          WHERE source_active AND received_date BETWEEN %s AND %s
         """, (cutoff, newest))
         total_cases, published_cases, provinces = cursor.fetchone()
+        validate_publication(
+            total_cases,
+            published_cases,
+            metrics.get("baseline_published_cases", 0),
+        )
         metrics.update({
             "unique_cases": total_cases, "published_cases": published_cases,
             "voivodeships": provinces, "parcel_cache_rows": loaded_parcels,
-            "case_parcel_refs": loaded_refs,
+            "case_parcel_refs": loaded_refs, "inactive_cases": inactive_cases,
         })
         cursor.execute("UPDATE imports SET finished_at=now(),status='success',metrics=%s WHERE id=%s",
                        (json.dumps(metrics, ensure_ascii=False), import_id))
@@ -475,8 +608,12 @@ def load_postgres(stage, metrics, cutoff, newest):
     return metrics
 
 
-def main():
+def run_import():
+    global ACTIVE_IMPORT_ID
     started = time.perf_counter()
+    if DOWNLOAD_ARCHIVES:
+        from scripts.download_gunb_archives import download_archives
+        download_archives(ZIP_DIR)
     archives = source_archives()
     newest = parse_date(PERIOD_END) if PERIOD_END else None
     if newest is None:
@@ -513,6 +650,10 @@ def main():
         metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
         return
+    metrics.update(validate_stage(stage, cutoff, newest))
+    if not FETCH_ONLY:
+        ACTIVE_IMPORT_ID = start_import(cutoff, newest)
+    metrics["parcel_geometries_reused"] = seed_existing_parcels(stage)
     if SKIP_ULDK:
         print("Skipping ULDK fallback; unmatched historical parcel ids remain unpublished", flush=True)
     else:
@@ -522,9 +663,18 @@ def main():
         metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
         return
-    metrics = load_postgres(stage, metrics, cutoff, newest)
+    metrics = load_postgres(stage, metrics, cutoff, newest, ACTIVE_IMPORT_ID)
     metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
+
+
+def main():
+    try:
+        run_import()
+    except Exception as error:
+        if not STAGE_ONLY and not FETCH_ONLY:
+            fail_import(ACTIVE_IMPORT_ID, error)
+        raise
 
 
 if __name__ == "__main__":
