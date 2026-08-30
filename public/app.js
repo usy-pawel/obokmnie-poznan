@@ -10,6 +10,7 @@ const state = {
   region: null,
   selectedCaseKey: null,
   selectedDetail: null,
+  selectedContext: null,
   listLimit: LIST_SIZE,
   baseLayer: 'streets',
   lastFittedQuery: '',
@@ -265,6 +266,53 @@ function renderProvinceChoices(features) {
   }
 }
 
+function appendTextItems(list, items) {
+  list.replaceChildren();
+  for (const text of items || []) {
+    const item = document.createElement('li');
+    item.textContent = text;
+    list.append(item);
+  }
+}
+
+function renderCaseContext(fragment, contextState) {
+  const status = fragment.querySelector('.context-state');
+  const content = fragment.querySelector('.context-content');
+  if (!contextState || contextState.status === 'loading') {
+    status.textContent = 'Analizuję oficjalne dane…';
+    content.hidden = true;
+    return;
+  }
+  if (contextState.status === 'error') {
+    status.textContent = 'Kontekst jest chwilowo niedostępny.';
+    content.hidden = true;
+    return;
+  }
+  const context = contextState.data;
+  status.textContent = context.generated_by === 'ai' ? 'Objaśnienie przygotowane na żądanie' : 'Podsumowanie danych urzędowych';
+  content.hidden = false;
+  fragment.querySelector('.context-summary').textContent = context.summary;
+  appendTextItems(fragment.querySelector('.context-signals'), context.signals);
+  appendTextItems(fragment.querySelector('.context-limitations ul'), context.limitations);
+  const stats = fragment.querySelector('.context-stats');
+  stats.replaceChildren();
+  const values = [
+    ['Te same działki', context.facts?.other_cases_on_same_parcel || 0],
+    ['W promieniu 250 m', context.facts?.cases_within_250m || 0],
+    ['W promieniu 1 km', context.facts?.cases_within_1km || 0],
+  ];
+  for (const [label, value] of values) {
+    const stat = document.createElement('span');
+    const strong = document.createElement('strong');
+    strong.textContent = Number(value).toLocaleString('pl-PL');
+    stat.append(strong, document.createTextNode(label));
+    stats.append(stat);
+  }
+  fragment.querySelector('.context-disclaimer').textContent = context.generated_by === 'ai'
+    ? 'AI objaśnia wyłącznie dane GUNB i statystyki tej mapy. Nie potwierdza realizacji inwestycji.'
+    : 'Podsumowanie powstało bez AI na podstawie danych GUNB i statystyk tej mapy.';
+}
+
 function renderCases() {
   const cases = state.features.filter((feature) => !feature.properties.cluster);
   const clusters = state.features.filter((feature) => feature.properties.cluster);
@@ -318,10 +366,16 @@ function renderCases() {
     fragment.querySelector('.case-address').textContent = item.address || item.city || item.voivodeship;
     fragment.querySelector('.case-status').textContent = item.status || 'brak statusu';
     fragment.querySelector('.detail-id').textContent = item.external_id || key;
+    const decisionRow = fragment.querySelector('.detail-decision-row');
+    decisionRow.hidden = !detail?.decision_date;
+    fragment.querySelector('.detail-decision-date').textContent = detail?.decision_date ? formatDate(detail.decision_date) : '';
+    fragment.querySelector('.detail-office').textContent = detail ? detail.office || 'brak danych' : 'ładowanie…';
+    fragment.querySelector('.detail-kind').textContent = detail ? detail.case_kind || 'brak danych' : 'ładowanie…';
     const resolvedParcelIds = detail?.parcels?.map((parcel) => parcel.parcel_id).filter(Boolean) || [];
     fragment.querySelector('.detail-parcels').textContent = detail
       ? resolvedParcelIds.join(', ') || (detail.parcel_ids || []).join(', ') || 'brak danych działki'
       : 'ładowanie…';
+    renderCaseContext(fragment, selected ? state.selectedContext : null);
     const aerialAction = fragment.querySelector('.aerial-action');
     aerialAction.hidden = Boolean(detail && !resolvedParcelIds.length);
     aerialAction.addEventListener('click', () => {
@@ -354,6 +408,7 @@ function setMapFeatures(collection) {
   ))) {
     state.selectedCaseKey = null;
     state.selectedDetail = null;
+    state.selectedContext = null;
     state.map?.getSource('selected-parcels')?.setData(emptyCollection());
   }
   const safeCollection = { type: 'FeatureCollection', features: state.features };
@@ -422,11 +477,27 @@ function scrollSelectedCard() {
   });
 }
 
+async function loadCaseContext(key) {
+  try {
+    const response = await fetch(`/api/cases/${encodeURIComponent(key)}/context`);
+    if (!response.ok) throw new Error(`API ${response.status}`);
+    const context = await response.json();
+    if (state.selectedCaseKey !== key) return;
+    state.selectedContext = { status: 'ready', data: context };
+    renderCases();
+  } catch {
+    if (state.selectedCaseKey !== key) return;
+    state.selectedContext = { status: 'error' };
+    renderCases();
+  }
+}
+
 async function selectCase(key, options = {}) {
   const { moveMap = false, showAerial = false, scrollToCard = false, toggle = true } = options;
   if (state.selectedCaseKey === key && state.selectedDetail && toggle) {
     state.selectedCaseKey = null;
     state.selectedDetail = null;
+    state.selectedContext = null;
     state.map.getSource('selected-parcels')?.setData(emptyCollection());
     renderCases();
     return;
@@ -443,15 +514,18 @@ async function selectCase(key, options = {}) {
   }
   state.selectedCaseKey = key;
   state.selectedDetail = null;
+  state.selectedContext = null;
   renderCases();
   try {
     const response = await fetch(`/api/cases/${encodeURIComponent(key)}`);
     if (!response.ok) throw new Error(`API ${response.status}`);
     state.selectedDetail = await response.json();
+    state.selectedContext = { status: 'loading' };
     const features = parcelFeatures(state.selectedDetail);
     if (!features.length) throw new Error('Brak geometrii działki');
     state.map.getSource('selected-parcels')?.setData({ type: 'FeatureCollection', features });
     renderCases();
+    void loadCaseContext(key);
     if (moveMap) {
       if (showAerial) setBaseLayer('aerial');
       const bounds = boundsForFeatures(features);
@@ -462,6 +536,7 @@ async function selectCase(key, options = {}) {
   } catch {
     state.selectedCaseKey = null;
     state.selectedDetail = null;
+    state.selectedContext = null;
     state.map.getSource('selected-parcels')?.setData(emptyCollection());
     renderCases();
     ui.listNote.textContent = 'Nie udało się pobrać szczegółów tej sprawy.';

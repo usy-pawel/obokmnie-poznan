@@ -2,11 +2,12 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, migration, integrityMigration, cityIndexMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, migration, integrityMigration, cityIndexMigration, contextMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/003_data_integrity.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/004_exact_city_index.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/006_case_contexts.sql', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
@@ -26,10 +27,12 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(importer, /voivodeship_teryt_code/);
   assert.match(cityIndexMigration, /lower\(city\)/);
   assert.match(migrateScript, /pg_advisory_lock/);
+  assert.match(contextMigration, /CREATE TABLE IF NOT EXISTS case_contexts/);
+  assert.match(contextMigration, /source_fingerprint/);
 });
 
-test('API exposes health, overview, search and case detail routes', () => {
-  for (const route of ['/health', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey']) {
+test('API exposes health, overview, search, detail and lazy context routes', () => {
+  for (const route of ['/health', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
@@ -47,6 +50,9 @@ test('API exposes health, overview, search and case detail routes', () => {
   assert.match(server, /NOT ST_IsEmpty/);
   assert.match(server, /LIMIT 7/);
   assert.match(server, /to_char\(c\.received_date,'YYYY-MM-DD'\)/);
+  assert.match(server, /contextInFlight/);
+  assert.match(server, /OPENAI_API_KEY/);
+  assert.match(server, /other_cases_on_same_parcel|same_parcel_count/);
 });
 
 test('country frontend loads data by viewport and parcel detail on demand', () => {
@@ -59,6 +65,8 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /baseLayer: 'streets'/);
   assert.match(frontend, /scrollSelectedCard/);
   assert.match(frontend, /detail\?\.parcels/);
+  assert.match(frontend, /loadCaseContext/);
+  assert.match(frontend, /Kontekst jest chwilowo niedostępny/);
   assert.match(frontend, /loadSuggestions/);
   assert.match(frontend, /aria-activedescendant/);
   assert.match(frontend, /renderProvinceChoices/);
@@ -69,5 +77,6 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(styles, /\.map-loading\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(html, /data-base-layer="streets" aria-pressed="true"/);
   assert.match(html, /role="combobox"/);
+  assert.match(html, /Kontekst sprawy i działki/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);
 });

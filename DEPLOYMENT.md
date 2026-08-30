@@ -20,6 +20,7 @@
 
 Geometrie zostały dopasowane deterministycznie z krajowego GeoParquet EGiB.
 AI nie wybiera lokalizacji ani granic działek.
+AI objaśnia wyłącznie dane wybranej sprawy i jej otoczenia po kliknięciu użytkownika.
 
 ## Mapa i API
 
@@ -34,6 +35,7 @@ Endpointy produkcyjne:
 - `/api/map`
 - `/api/search`
 - `/api/cases/:caseKey`
+- `/api/cases/:caseKey/context` — kontekst pobierany na żądanie i przechowywany w cache
 
 ## Lokalne CI
 

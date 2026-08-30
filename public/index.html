@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=polska-3" />
+    <link rel="stylesheet" href="/styles.css?v=polska-4" />
   </head>
   <body>
     <div class="page-shell">
@@ -143,8 +143,30 @@
         <div class="case-details" hidden>
           <dl>
             <div><dt>Numer GUNB</dt><dd class="detail-id"></dd></div>
+            <div class="detail-decision-row"><dt>Data wydania decyzji</dt><dd class="detail-decision-date"></dd></div>
+            <div><dt>Organ prowadzący</dt><dd class="detail-office"></dd></div>
+            <div><dt>Rodzaj zamierzenia</dt><dd class="detail-kind"></dd></div>
             <div><dt>Działki</dt><dd class="detail-parcels"></dd></div>
           </dl>
+          <section class="case-context" aria-label="Kontekst sprawy i działki">
+            <div class="case-context-heading">
+              <span class="context-spark" aria-hidden="true">✦</span>
+              <div>
+                <h3>Kontekst sprawy i działki</h3>
+                <p class="context-state" role="status">Analizuję oficjalne dane…</p>
+              </div>
+            </div>
+            <div class="context-content" hidden>
+              <p class="context-summary"></p>
+              <ul class="context-signals"></ul>
+              <div class="context-stats" aria-label="Sprawy w otoczeniu działki"></div>
+              <details class="context-limitations">
+                <summary>Czego te dane nie potwierdzają</summary>
+                <ul></ul>
+              </details>
+              <p class="context-disclaimer"></p>
+            </div>
+          </section>
           <button class="aerial-action" type="button">
             <span aria-hidden="true">◫</span> Pokaż działkę na zdjęciu lotniczym
           </button>
@@ -156,6 +178,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-10"></script>
+    <script type="module" src="/app.js?v=polska-11"></script>
   </body>
 </html>

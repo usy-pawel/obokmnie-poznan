@@ -20,6 +20,9 @@ npm install
 pip install -r scripts/requirements.txt
 $env:DATABASE_URL='postgresql://...'
 $env:PGSSLMODE='disable'
+$env:OPENAI_API_KEY='...'
+$env:OPENAI_BASE_URL='https://api.openai.com/v1'
+$env:OPENAI_CONTEXT_MODEL='gpt-5.6-luna'
 npm run migrate
 npm start
 ```
@@ -50,4 +53,6 @@ Importer strumieniowo czyta 17 bieżących archiwów GUNB, normalizuje ostatnie 
 - lekkie agregaty przestrzenne dla widoku kraju i zapytania po obszarze dla większego zbliżenia,
 - MapLibre GL JS i OpenFreeMap Positron,
 - przełączany podkład ortofotomapy GUGiK bez klucza API,
+- kontekst sprawy generowany dopiero po jej otwarciu z danych GUNB, historii działki i statystyk otoczenia,
+- pojedyncze objaśnienie GPT-5.6 Luna zapisywane w PostGIS i ponownie używane do czasu zmiany danych źródłowych,
 - Railway połączony z gałęzią `main` na GitHubie.

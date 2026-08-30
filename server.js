@@ -1,6 +1,12 @@
 import express from 'express';
 import pg from 'pg';
 import compression from 'compression';
+import {
+  buildContextFacts,
+  contextFingerprint,
+  deterministicContext,
+  generateAiContext,
+} from './lib/case-context.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
@@ -12,6 +18,32 @@ const VOIVODESHIPS = new Set([
 const pool = process.env.DATABASE_URL
   ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }, max: 10 })
   : null;
+const contextInFlight = new Map();
+const contextRateLimits = new Map();
+const CONTEXT_RATE_LIMIT = 20;
+const CONTEXT_RATE_WINDOW_MS = 60 * 60 * 1000;
+
+function contextClientId(request) {
+  return String(request.headers['x-forwarded-for'] || request.ip || 'unknown').split(',')[0].trim();
+}
+
+function canGenerateContext(request) {
+  const key = contextClientId(request);
+  const now = Date.now();
+  if (contextRateLimits.size > 1_000) {
+    for (const [clientId, entry] of contextRateLimits) {
+      if (now - entry.startedAt >= CONTEXT_RATE_WINDOW_MS) contextRateLimits.delete(clientId);
+    }
+  }
+  const current = contextRateLimits.get(key);
+  if (!current || now - current.startedAt >= CONTEXT_RATE_WINDOW_MS) {
+    contextRateLimits.set(key, { startedAt: now, count: 1 });
+    return true;
+  }
+  if (current.count >= CONTEXT_RATE_LIMIT) return false;
+  current.count += 1;
+  return true;
+}
 
 app.disable('x-powered-by');
 app.use(compression());
@@ -276,6 +308,104 @@ app.get('/api/cases/:caseKey', async (request, response, next) => {
     `, [request.params.caseKey]);
     if (!result.rowCount) return response.status(404).json({ error: 'not_found' });
     response.json(result.rows[0]);
+  } catch (error) { next(error); }
+});
+
+app.get('/api/cases/:caseKey/context', async (request, response, next) => {
+  try {
+    const subjectResult = await pool.query(`
+      SELECT c.id, c.case_key, c.external_id, c.source_type,
+             to_char(c.received_date,'YYYY-MM-DD') AS received_date,
+             to_char(c.decision_date,'YYYY-MM-DD') AS decision_date,
+             c.status, c.office, c.voivodeship, c.city, c.address, c.case_kind, c.description,
+             c.parcel_ids, c.location
+      FROM cases c
+      WHERE c.case_key=$1 AND c.published
+    `, [request.params.caseKey]);
+    if (!subjectResult.rowCount) return response.status(404).json({ error: 'not_found' });
+    const subject = subjectResult.rows[0];
+    const [nearbyResult, relatedResult] = await Promise.all([
+      pool.query(`
+        WITH subject AS (SELECT id, location FROM cases WHERE id=$1)
+        SELECT
+          count(c.id) FILTER (WHERE ST_DWithin(c.location::geography, s.location::geography, 250))::int AS within_250m,
+          count(c.id)::int AS within_1km,
+          count(c.id) FILTER (WHERE c.source_type='wniosek_decyzja')::int AS permits_within_1km,
+          count(c.id) FILTER (WHERE c.source_type='zgloszenie')::int AS notices_within_1km,
+          (SELECT count(DISTINCT related.case_id)::int
+           FROM case_parcels own
+           JOIN case_parcels related ON related.parcel_id=own.parcel_id AND related.case_id<>s.id
+           JOIN cases related_case ON related_case.id=related.case_id AND related_case.published
+           WHERE own.case_id=s.id) AS same_parcel_count
+        FROM subject s
+        LEFT JOIN cases c ON c.published AND c.id<>s.id
+          AND c.location && ST_Expand(s.location, 0.02)
+          AND ST_DWithin(c.location::geography, s.location::geography, 1000)
+        GROUP BY s.id
+      `, [subject.id]),
+      pool.query(`
+        SELECT related_case.source_type,
+               to_char(related_case.received_date,'YYYY-MM-DD') AS received_date,
+               related_case.status, related_case.description
+        FROM cases related_case
+        WHERE related_case.published AND related_case.id IN (
+          SELECT related.case_id
+          FROM case_parcels own
+          JOIN case_parcels related ON related.parcel_id=own.parcel_id AND related.case_id<>own.case_id
+          WHERE own.case_id=$1
+        )
+        ORDER BY related_case.received_date DESC, related_case.id
+        LIMIT 5
+      `, [subject.id]),
+    ]);
+    const facts = buildContextFacts(subject, nearbyResult.rows[0] || {}, relatedResult.rows);
+    const fingerprint = contextFingerprint(facts);
+    const cached = await pool.query(`
+      SELECT context, model, generated_at
+      FROM case_contexts
+      WHERE case_id=$1 AND source_fingerprint=$2
+    `, [subject.id, fingerprint]);
+    if (cached.rowCount) {
+      return response.json({
+        ...cached.rows[0].context,
+        facts: facts.surroundings,
+        generated_by: 'ai',
+        cached: true,
+        generated_at: cached.rows[0].generated_at,
+      });
+    }
+
+    const fallback = deterministicContext(facts);
+    if (!process.env.OPENAI_API_KEY || !canGenerateContext(request)) {
+      return response.json({ ...fallback, facts: facts.surroundings, generated_by: 'rules', cached: false });
+    }
+
+    let generation = contextInFlight.get(subject.case_key);
+    if (!generation) {
+      generation = (async () => {
+        const generated = await generateAiContext(facts);
+        await pool.query(`
+          INSERT INTO case_contexts(case_id, source_fingerprint, context, model, generated_at)
+          VALUES($1,$2,$3,$4,now())
+          ON CONFLICT(case_id) DO UPDATE SET
+            source_fingerprint=excluded.source_fingerprint,
+            context=excluded.context,
+            model=excluded.model,
+            generated_at=now()
+        `, [subject.id, fingerprint, generated.context, generated.model]);
+        return generated.context;
+      })();
+      contextInFlight.set(subject.case_key, generation);
+    }
+    try {
+      const context = await generation;
+      return response.json({ ...context, facts: facts.surroundings, generated_by: 'ai', cached: false });
+    } catch (error) {
+      console.error('case context generation failed', { caseKey: subject.case_key, message: error.message });
+      return response.json({ ...fallback, facts: facts.surroundings, generated_by: 'rules', cached: false });
+    } finally {
+      if (contextInFlight.get(subject.case_key) === generation) contextInFlight.delete(subject.case_key);
+    }
   } catch (error) { next(error); }
 });
 

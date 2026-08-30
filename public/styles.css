@@ -587,6 +587,48 @@ button { color: inherit; }
 .case-details dt { color: #89938f; font-size: 9px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
 .case-details dd { margin: 3px 0 0; overflow-wrap: anywhere; color: var(--ink); font-size: 11px; line-height: 1.45; }
 
+.case-context {
+  margin: 15px 0 13px;
+  padding: 13px;
+  border: 1px solid #dce2da;
+  border-radius: 11px;
+  background: #f5f7f2;
+}
+
+.case-context-heading { display: flex; align-items: flex-start; gap: 9px; }
+.context-spark {
+  display: grid;
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--ink);
+  color: #fff;
+  font-size: 11px;
+}
+.case-context h3 { margin: 1px 0 2px; color: var(--ink); font-family: Georgia, serif; font-size: 14px; }
+.context-state { margin: 0; color: var(--ink-soft); font-size: 10px; line-height: 1.4; }
+.context-summary { margin: 12px 0 8px; color: var(--ink); font-size: 12px; font-weight: 700; line-height: 1.5; }
+.context-signals, .context-limitations ul { margin: 0; padding-left: 17px; color: #4e605c; font-size: 11px; line-height: 1.5; }
+.context-signals li + li, .context-limitations li + li { margin-top: 5px; }
+.context-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin: 12px 0; }
+.context-stats span {
+  min-width: 0;
+  padding: 8px 6px;
+  border-radius: 8px;
+  background: #fff;
+  color: var(--ink-soft);
+  font-size: 8px;
+  line-height: 1.25;
+  text-align: center;
+}
+.context-stats strong { display: block; margin-bottom: 2px; color: var(--ink); font-size: 14px; }
+.context-limitations { border-top: 1px solid #dce2da; padding-top: 9px; }
+.context-limitations summary { color: var(--ink); cursor: pointer; font-size: 10px; font-weight: 800; }
+.context-limitations ul { margin-top: 8px; }
+.context-disclaimer { margin: 10px 0 0; color: #75817d; font-size: 9px; line-height: 1.4; }
+
 .source-link { color: var(--permit); font-size: 11px; font-weight: 800; text-decoration: none; }
 .source-link:hover { text-decoration: underline; }
 
