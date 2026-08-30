@@ -48,6 +48,14 @@ npm run maintenance:preflight -- --base-url http://localhost:3000 --allow-localh
 Preflight ma wersję `radar_maintenance_api_v1`, czyta wyłącznie publiczne endpointy
 i nie zapisuje niczego w PostgreSQL.
 
+Agregatową weryfikację najnowszego udanego importu i eventów Radaru uruchamia:
+
+```powershell
+npm run verify:radar-import
+```
+
+Skrypt wykonuje jedno zapytanie read-only i nie zwraca danych spraw ani snapshotów.
+
 ## Lokalne CI
 
 ```powershell
