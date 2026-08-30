@@ -43,6 +43,7 @@ RETRY_ERRORS = os.environ.get("OBOKMNIE_RETRY_ERRORS") == "1"
 FETCH_ONLY = os.environ.get("OBOKMNIE_FETCH_ONLY") == "1"
 SKIP_ULDK = os.environ.get("OBOKMNIE_SKIP_ULDK") == "1"
 DOWNLOAD_ARCHIVES = os.environ.get("OBOKMNIE_DOWNLOAD_ARCHIVES") == "1"
+RADAR_HOUSEKEEPING_ONLY = "--radar-housekeeping-only" in sys.argv[1:]
 MIN_STAGE_CASES = int(os.environ.get("OBOKMNIE_MIN_STAGE_CASES", "100000"))
 MIN_STAGE_RATIO = float(os.environ.get("OBOKMNIE_MIN_STAGE_RATIO", "0.75"))
 MAX_STAGE_RATIO = float(os.environ.get("OBOKMNIE_MAX_STAGE_RATIO", "1.5"))
@@ -62,6 +63,13 @@ class ImportAlreadyRunning(RuntimeError):
 
 class StageAlreadyRunning(RuntimeError):
     code = STAGE_ALREADY_RUNNING
+
+
+class RadarHousekeepingFailed(RuntimeError):
+    def __init__(self, code, evidence=None):
+        super().__init__(code)
+        self.code = code
+        self.evidence = evidence or {}
 
 
 @contextlib.contextmanager
@@ -449,15 +457,79 @@ def fetch_missing_parcels(database):
 def postgres_connection():
     if psycopg is None:
         raise RuntimeError("Zainstaluj zależności: pip install -r scripts/requirements.txt")
-    url = os.environ.get("DATABASE_PUBLIC_URL") or os.environ.get("DATABASE_URL")
+    private_url = os.environ.get("DATABASE_URL")
+    public_url = None if private_url else os.environ.get("DATABASE_PUBLIC_URL")
+    url = private_url or public_url
     sslmode = os.environ.get("PGSSLMODE", "require")
+    if public_url and sslmode not in ("verify-ca", "verify-full"):
+        raise RuntimeError("Publiczne połączenie PostgreSQL wymaga weryfikacji TLS")
     if url:
         return psycopg.connect(url, sslmode=sslmode)
-    return psycopg.connect(
-        host=os.environ["PGHOST"], port=os.environ.get("PGPORT", "5432"),
-        user=os.environ["PGUSER"], password=os.environ["PGPASSWORD"],
-        dbname=os.environ["PGDATABASE"], sslmode=sslmode,
-    )
+    raise RuntimeError("Brak DATABASE_URL albo DATABASE_PUBLIC_URL")
+
+
+def run_radar_housekeeping():
+    """Recover projection gaps and purge expired private profiles after a successful import."""
+    connection = postgres_connection()
+    recovered_imports = 0
+    recovered_events = 0
+    recovered_matches = 0
+    purged_profiles = 0
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SET LOCAL lock_timeout='5s'")
+            cursor.execute("SET LOCAL statement_timeout='120s'")
+            cursor.execute("SELECT import_id,event_count,match_count FROM radar_recover_missing_projections(100)")
+            for _import_id, event_count, match_count in cursor.fetchall():
+                recovered_imports += 1
+                recovered_events += event_count
+                recovered_matches += match_count
+        connection.commit()
+
+        for _batch in range(50):
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout='5s'")
+                cursor.execute("SET LOCAL statement_timeout='30s'")
+                cursor.execute("SELECT radar_purge_expired_profiles(1000)")
+                deleted = cursor.fetchone()[0]
+            connection.commit()
+            purged_profiles += deleted
+            if deleted < 1000:
+                break
+
+        with connection.cursor() as cursor:
+            cursor.execute("""
+              SELECT
+                count(*) FILTER (WHERE projection.import_id IS NULL)::int,
+                (SELECT count(*)::int FROM radar_profiles
+                 WHERE inactive_expires_at<=clock_timestamp()
+                    OR absolute_expires_at<=clock_timestamp())
+              FROM imports imported
+              LEFT JOIN radar_import_projections projection ON projection.import_id=imported.id
+              WHERE imported.status='success' AND imported.finished_at IS NOT NULL
+            """)
+            missing_projections, expired_profiles = cursor.fetchone()
+        connection.commit()
+        return {
+            "radar_recovered_imports": recovered_imports,
+            "radar_recovered_events": recovered_events,
+            "radar_recovered_matches": recovered_matches,
+            "radar_purged_profiles": purged_profiles,
+            "radar_missing_projections": missing_projections,
+            "radar_expired_profiles_remaining": expired_profiles,
+        }
+    finally:
+        connection.close()
+
+
+def checked_radar_housekeeping():
+    try:
+        evidence = run_radar_housekeeping()
+    except Exception:
+        raise RadarHousekeepingFailed("radar_housekeeping_failed") from None
+    if evidence.get("radar_missing_projections", 0) > 0 or evidence.get("radar_expired_profiles_remaining", 0) > 0:
+        raise RadarHousekeepingFailed("radar_housekeeping_incomplete", evidence)
+    return evidence
 
 
 def chunks(iterator, size=1000):
@@ -502,7 +574,8 @@ def fail_import(import_id, error):
                 """, (date.today(), str(error)[:4000]))
             else:
                 cursor.execute("""
-                  UPDATE imports SET finished_at=now(),status='failed',error=%s WHERE id=%s
+                  UPDATE imports SET finished_at=now(),status='failed',error=%s
+                  WHERE id=%s AND status='running'
                 """, (str(error)[:4000], import_id))
         connection.commit()
         connection.close()
@@ -679,8 +752,29 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
             "voivodeships": provinces, "parcel_cache_rows": loaded_parcels,
             "case_parcel_refs": loaded_refs, "inactive_cases": inactive_cases,
         })
-        cursor.execute("UPDATE imports SET finished_at=clock_timestamp(),status='success',metrics=%s WHERE id=%s",
-                       (json.dumps(metrics, ensure_ascii=False), import_id))
+        cursor.execute("SET LOCAL lock_timeout='5s'")
+        cursor.execute("SET LOCAL statement_timeout='120s'")
+        cursor.execute("SELECT pg_advisory_xact_lock(hashtext('radar_watch_projection'))")
+        cursor.execute("""
+          UPDATE imports
+          SET finished_at=clock_timestamp(),status='success',metrics=%s
+          WHERE id=%s AND status='running'
+        """, (json.dumps(metrics, ensure_ascii=False), import_id))
+        if cursor.rowcount != 1:
+            raise RuntimeError("Import nie jest już w stanie running")
+        cursor.execute(
+            "SELECT event_count,match_count FROM radar_project_import(%s)",
+            (import_id,),
+        )
+        projected_events, projected_matches = cursor.fetchone()
+        metrics.update({
+            "radar_projected_events": projected_events,
+            "radar_projected_matches": projected_matches,
+        })
+        cursor.execute(
+            "UPDATE imports SET metrics=%s WHERE id=%s AND status='success'",
+            (json.dumps(metrics, ensure_ascii=False), import_id),
+        )
         connection.commit()
     connection.close()
     return metrics
@@ -742,6 +836,7 @@ def run_import():
         print(json.dumps(metrics, ensure_ascii=False, indent=2))
         return
     metrics = load_postgres(stage, metrics, cutoff, newest, ACTIVE_IMPORT_ID)
+    metrics.update(checked_radar_housekeeping())
     metrics["elapsed_seconds"] = round(time.perf_counter() - started, 2)
     print(json.dumps(metrics, ensure_ascii=False, indent=2))
 
@@ -750,6 +845,9 @@ def main():
     global ACTIVE_IMPORT_ID
     ACTIVE_IMPORT_ID = None
     try:
+        if RADAR_HOUSEKEEPING_ONLY:
+            print(json.dumps(checked_radar_housekeeping(), ensure_ascii=False, sort_keys=True), flush=True)
+            return 0
         if STAGE_ONLY or FETCH_ONLY:
             with stage_advisory_lock():
                 run_import()
@@ -760,9 +858,19 @@ def main():
                         run_import()
                 except StageAlreadyRunning:
                     raise
+                except RadarHousekeepingFailed:
+                    raise
                 except Exception as error:
                     fail_import(ACTIVE_IMPORT_ID, error)
                     raise
+    except RadarHousekeepingFailed as error:
+        print(json.dumps({
+            "ok": False,
+            "code": error.code,
+            "radar_missing_projections": error.evidence.get("radar_missing_projections"),
+            "radar_expired_profiles_remaining": error.evidence.get("radar_expired_profiles_remaining"),
+        }, ensure_ascii=False, sort_keys=True), flush=True)
+        return 2
     except (ImportAlreadyRunning, StageAlreadyRunning) as error:
         print(json.dumps({"ok": True, "skipped": True, "code": error.code}), flush=True)
         return IMPORT_ALREADY_RUNNING_EXIT_CODE

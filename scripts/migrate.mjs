@@ -1,12 +1,39 @@
 import { readFile, readdir } from 'node:fs/promises';
 import pg from 'pg';
 
-const connectionString = process.env.DATABASE_PUBLIC_URL || process.env.DATABASE_URL;
-if (!connectionString && !process.env.PGHOST) throw new Error('Brak konfiguracji PostgreSQL');
+function connectionStringWithoutOptions(value) {
+  if (!value) return null;
+  const parsed = new URL(value);
+  parsed.search = '';
+  parsed.hash = '';
+  return parsed.toString();
+}
+
+function sslMode(value) {
+  try { return new URL(value).searchParams.get('sslmode')?.toLowerCase() || ''; }
+  catch { return ''; }
+}
+
+const privateConnectionString = process.env.DATABASE_URL || null;
+const publicConnectionString = privateConnectionString ? null : process.env.DATABASE_PUBLIC_URL || null;
+const connectionString = privateConnectionString || publicConnectionString;
+if (!connectionString) throw new Error('Brak DATABASE_URL albo DATABASE_PUBLIC_URL');
+const configuredSslMode = (process.env.PGSSLMODE || sslMode(connectionString)).toLowerCase();
+if (publicConnectionString && !['verify-ca', 'verify-full'].includes(configuredSslMode || 'verify-full')) {
+  throw new Error('Publiczna migracja PostgreSQL wymaga weryfikacji TLS');
+}
 
 const client = new pg.Client({
-  ...(connectionString ? { connectionString } : {}),
-  ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false },
+  connectionString: connectionStringWithoutOptions(connectionString),
+  ssl: publicConnectionString || ['verify-ca', 'verify-full'].includes(configuredSslMode)
+    ? { rejectUnauthorized: true }
+    : configuredSslMode === 'disable' || configuredSslMode === ''
+      ? false
+      : { rejectUnauthorized: false },
+  connectionTimeoutMillis: 5_000,
+  statement_timeout: 60_000,
+  query_timeout: 70_000,
+  application_name: 'radar_schema_migration',
 });
 
 await client.connect();

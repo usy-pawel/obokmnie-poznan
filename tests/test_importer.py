@@ -44,6 +44,162 @@ class ImporterTests(unittest.TestCase):
     def test_publication_validation_accepts_stable_result(self):
         IMPORTER.validate_publication(1000, 700, 800)
 
+    def test_database_connection_prefers_private_url(self):
+        calls = []
+
+        class Psycopg:
+            @staticmethod
+            def connect(url, **kwargs):
+                calls.append((url, kwargs))
+                return object()
+
+        with (
+            patch.object(IMPORTER, "psycopg", Psycopg()),
+            patch.dict(IMPORTER.os.environ, {
+                "DATABASE_URL": "postgresql://private/radar",
+                "DATABASE_PUBLIC_URL": "postgresql://public/radar",
+                "PGSSLMODE": "disable",
+            }, clear=True),
+        ):
+            IMPORTER.postgres_connection()
+
+        self.assertEqual(calls, [("postgresql://private/radar", {"sslmode": "disable"})])
+
+    def test_public_database_connection_requires_verified_tls(self):
+        class Psycopg:
+            @staticmethod
+            def connect(*_args, **_kwargs):
+                raise AssertionError("connect nie powinien zostać wywołany")
+
+        with (
+            patch.object(IMPORTER, "psycopg", Psycopg()),
+            patch.dict(IMPORTER.os.environ, {
+                "DATABASE_PUBLIC_URL": "postgresql://public/radar",
+                "PGSSLMODE": "require",
+            }, clear=True),
+            self.assertRaisesRegex(RuntimeError, "weryfikacji TLS"),
+        ):
+            IMPORTER.postgres_connection()
+
+    def test_database_connection_rejects_legacy_host_fields(self):
+        with (
+            patch.dict(IMPORTER.os.environ, {
+                "PGHOST": "public.example",
+                "PGUSER": "radar",
+                "PGDATABASE": "radar",
+            }, clear=True),
+            self.assertRaisesRegex(RuntimeError, "DATABASE_URL"),
+        ):
+            IMPORTER.postgres_connection()
+
+    def test_housekeeping_recovers_projection_gaps_and_purges_expired_profiles(self):
+        class Cursor:
+            sql = ""
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, sql, _params=None):
+                self.sql = sql
+
+            def fetchall(self):
+                return [(7, 2, 3)]
+
+            def fetchone(self):
+                if "radar_purge_expired_profiles" in self.sql:
+                    return (1,)
+                return (0, 0)
+
+        class Connection:
+            def __init__(self):
+                self.cursor_instance = Cursor()
+                self.commits = 0
+                self.closed = False
+
+            def cursor(self):
+                return self.cursor_instance
+
+            def commit(self):
+                self.commits += 1
+
+            def close(self):
+                self.closed = True
+
+        connection = Connection()
+        with patch.object(IMPORTER, "postgres_connection", return_value=connection):
+            result = IMPORTER.run_radar_housekeeping()
+
+        self.assertEqual(result, {
+            "radar_recovered_imports": 1,
+            "radar_recovered_events": 2,
+            "radar_recovered_matches": 3,
+            "radar_purged_profiles": 1,
+            "radar_missing_projections": 0,
+            "radar_expired_profiles_remaining": 0,
+        })
+        self.assertEqual(connection.commits, 3)
+        self.assertTrue(connection.closed)
+
+    def test_housekeeping_only_mode_skips_import_locks_and_data_pipeline(self):
+        output = StringIO()
+        with (
+            patch.object(IMPORTER, "RADAR_HOUSEKEEPING_ONLY", True),
+            patch.object(IMPORTER, "run_radar_housekeeping", return_value={"radar_purged_profiles": 2}) as housekeeping,
+            patch.object(IMPORTER, "import_advisory_lock") as import_lock,
+            patch.object(IMPORTER, "run_import") as run_import,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(IMPORTER.main(), 0)
+
+        housekeeping.assert_called_once()
+        import_lock.assert_not_called()
+        run_import.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue()), {"radar_purged_profiles": 2})
+
+    def test_housekeeping_only_mode_is_nonzero_when_bounded_work_remains(self):
+        output = StringIO()
+        evidence = {
+            "radar_missing_projections": 1,
+            "radar_expired_profiles_remaining": 2,
+        }
+        with (
+            patch.object(IMPORTER, "RADAR_HOUSEKEEPING_ONLY", True),
+            patch.object(IMPORTER, "run_radar_housekeeping", return_value=evidence),
+            redirect_stdout(output),
+        ):
+            self.assertEqual(IMPORTER.main(), 2)
+
+        self.assertEqual(json.loads(output.getvalue()), {
+            "ok": False,
+            "code": "radar_housekeeping_incomplete",
+            "radar_missing_projections": 1,
+            "radar_expired_profiles_remaining": 2,
+        })
+
+    def test_housekeeping_failure_after_success_is_nonzero_without_rewriting_import(self):
+        output = StringIO()
+        with (
+            patch.object(IMPORTER, "RADAR_HOUSEKEEPING_ONLY", False),
+            patch.object(IMPORTER, "STAGE_ONLY", False),
+            patch.object(IMPORTER, "FETCH_ONLY", False),
+            patch.object(IMPORTER, "import_advisory_lock", return_value=contextlib.nullcontext()),
+            patch.object(IMPORTER, "stage_advisory_lock", return_value=contextlib.nullcontext()),
+            patch.object(
+                IMPORTER,
+                "run_import",
+                side_effect=IMPORTER.RadarHousekeepingFailed("radar_housekeeping_failed"),
+            ),
+            patch.object(IMPORTER, "fail_import") as fail_import,
+            redirect_stdout(output),
+        ):
+            self.assertEqual(IMPORTER.main(), 2)
+
+        fail_import.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())["code"], "radar_housekeeping_failed")
+
     def test_mutating_import_holds_session_advisory_lock_for_entire_run(self):
         events = []
 

@@ -31,6 +31,8 @@ function healthyRow(overrides = {}) {
     first_event_at: '2026-08-30T09:05:00.000Z',
     last_event_at: '2026-08-30T10:55:00.000Z',
     non_success_event_total: '0',
+    missing_projection_total: '0',
+    latest_projection_kind: 'projected',
     ...overrides,
   };
 }
@@ -51,6 +53,7 @@ test('verification performs one read-only aggregate query and returns only aggre
   assert.match(queries[0], /invalid_import\.status<>'success'/);
   assert.match(queries[0], /metrics->>'voivodeships'/);
   assert.match(queries[0], /metrics->>'published_cases'/);
+  assert.match(queries[0], /radar_import_projections/);
   assert.equal(result.version, RADAR_IMPORT_VERIFICATION_VERSION);
   assert.equal(result.ok, true);
   assert.equal(result.code, null);
@@ -65,12 +68,18 @@ test('verification performs one read-only aggregate query and returns only aggre
     last_occurred_at: '2026-08-30T10:55:00.000Z',
     for_non_success_imports: 0,
   });
+  assert.deepEqual(result.projections, {
+    missing_successful_imports: 0,
+    latest_kind: 'projected',
+  });
   assert.doesNotMatch(JSON.stringify(result), /person@example\.com|secret|token/);
 });
 
 test('verification deterministically checks event totals, import status, ranges and freshness', () => {
   const cases = [
     [{ non_success_event_total: '1' }, 'events_for_non_success_import'],
+    [{ missing_projection_total: '1' }, 'missing_radar_projection'],
+    [{ latest_projection_kind: null }, 'missing_latest_radar_projection'],
     [{ event_total: '17' }, 'event_count_mismatch'],
     [{ finished_at: null }, 'invalid_import_time_range'],
     [{ started_at: '2026-08-30T11:30:00.000Z' }, 'invalid_import_time_range'],

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, serverRadarMigration, radarSubscriptions, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../lib/service-health.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
@@ -11,6 +11,8 @@ const [server, serviceHealth, migration, integrityMigration, cityIndexMigration,
   readFile(new URL('../migrations/006_case_contexts.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/007_history_range_indexes.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/009_change_radar.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../lib/radar-subscriptions.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
   readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
@@ -37,6 +39,13 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(radarMigration, /CREATE TABLE IF NOT EXISTS case_events/);
   assert.match(radarMigration, /CREATE TRIGGER cases_change_radar/);
   assert.match(radarMigration, /snapshot->'parcel_ids'/);
+  assert.match(serverRadarMigration, /match_parcel_ids/);
+  assert.match(serverRadarMigration, /radar_project_import/);
+  assert.match(serverRadarMigration, /radar_backfill_watch/);
+  assert.match(serverRadarMigration, /radar_purge_expired_profiles/);
+  assert.match(serverRadarMigration, /radar_recover_missing_projections/);
+  assert.match(serverRadarMigration, /radar_charge_global_rate/);
+  assert.match(serverRadarMigration, /pg_advisory_xact_lock/);
   assert.match(importer, /OBOKMNIE_PERIOD_START/);
   assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
   assert.match(importer, /Oczekiwano 18 archiwów GUNB/);
@@ -68,6 +77,12 @@ test('API exposes health, private maintenance, overview, search, radar, detail a
   assert.match(server, /to_char\(c\.received_date,'YYYY-MM-DD'\)/);
   assert.match(server, /contextInFlight/);
   assert.match(server, /OPENAI_API_KEY/);
+  assert.match(server, /createRadarSubscriptionsRouter/);
+  assert.match(server, /RADAR_SERVER_ENABLED === '1'/);
+  assert.match(radarSubscriptions, /__Host-radar_profile/);
+  assert.match(radarSubscriptions, /__Host-radar_csrf/);
+  assert.match(radarSubscriptions, /Cache-Control', 'no-store/);
+  assert.match(radarSubscriptions, /RADAR_LIMITS/);
   assert.match(server, /other_cases_on_same_parcel|same_parcel_count/);
   assert.match(server, /DATE_RANGES/);
   assert.match(server, /make_interval\(months=>/);
@@ -77,6 +92,9 @@ test('API exposes health, private maintenance, overview, search, radar, detail a
   assert.match(importer, /seed_existing_parcels/);
   assert.match(importer, /case_fingerprint/);
   assert.match(importer, /set_config\('obokmnie\.import_id'/);
+  assert.match(importer, /radar_watch_projection/);
+  assert.match(importer, /radar_project_import/);
+  assert.match(importer, /run_radar_housekeeping/);
   assert.match(importer, /finished_at=clock_timestamp\(\)/);
   assert.doesNotMatch(importer, /cursor\.executemany\(upsert_case, values\)\s+connection\.commit\(\)/);
   assert.match(importer, /source_active=false/);

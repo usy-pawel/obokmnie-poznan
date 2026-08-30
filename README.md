@@ -24,6 +24,7 @@ $env:PGSSLMODE='disable'
 $env:OPENAI_API_KEY='...'
 $env:OPENAI_BASE_URL='https://api.openai.com/v1'
 $env:OPENAI_CONTEXT_MODEL='gpt-5.6-luna'
+$env:RADAR_SERVER_ENABLED='1'
 npm run migrate
 npm start
 ```
@@ -74,7 +75,8 @@ Agregatową weryfikację najnowszego udanego importu i eventów Radaru uruchamia
 npm run verify:radar-import
 ```
 
-Skrypt wykonuje jedno zapytanie read-only i nie zwraca danych spraw ani snapshotów.
+Skrypt wykonuje jedno zapytanie read-only, nie zwraca danych spraw ani snapshotów i blokuje
+aktywację, jeśli choć jeden udany import nie ma rekordu projekcji Radaru.
 
 ## Lokalne CI
 
@@ -83,6 +85,8 @@ npm run check
 ```
 
 Kontrole obejmują składnię serwera, frontendu, migracji i importera oraz testy danych. GitHub Actions nie jest bramką wdrożenia.
+Pełna bramka wydania `npm run check:release` uruchamia dodatkowo migrację 010→011 oraz testy SQL/API
+na losowej bazie `radar_test_*` dostępnej wyłącznie przez loopback.
 
 ## Aktualizacja danych
 
@@ -108,13 +112,61 @@ Pełny import wykonany 30 sierpnia 2026 trwał 7 049 sekund. Baza po imporcie za
 
 ## Radar Zmian MVP
 
-Po rozwinięciu sprawy użytkownik może obserwować jej działkę. Lista obserwowanych działek jest
-przechowywana wyłącznie w jego przeglądarce, bez konta i bez danych osobowych. Po kolejnych udanych
-importach endpoint `GET /api/radar` zwraca nowe, zmienione lub usunięte ze źródła sprawy dotyczące
-obserwowanych działek. Pierwszym kanałem powiadomienia jest licznik i oś zmian w interfejsie.
+Po rozwinięciu sprawy użytkownik może obserwować jej działkę. Publiczny interfejs nadal zachowuje
+obserwacje w `localStorage` i korzysta z kompatybilnego `GET /api/radar`; tego fallbacku nie wolno
+usunąć podczas pierwszego rolloutu serwerowego Radaru.
+
+Addytywna migracja `011_server_radar.sql` przygotowuje trwały monitoring pojedynczej działki,
+zestawu działek albo promienia 500 m / 1 km / 3 km. Anonimowy profil jest uwierzytelniany losowym
+256-bitowym sekretem w host-only cookie; baza przechowuje wyłącznie SHA-256 sekretu i CSRF. Limit to
+20 monitorów, 100 przypisań działek i 3 obszary na profil. Profil wygasa po 90 dniach bezczynności,
+nie później niż rok od utworzenia; wygasłe profile usuwa ograniczony housekeeping uruchamiany po
+każdym udanym imporcie. Ten sam przebieg odzyskuje ewentualne udane importy bez projekcji.
+
+API profili jest domyślnie wyłączone i zwraca 404. Włącza je dopiero
+`RADAR_SERVER_ENABLED=1`; stary read-only `GET /api/radar` pozostaje dostępny niezależnie.
+Tworzenie profili i monitorów ma trwałe godzinne limity globalne, a profil dodatkowo ogranicza
+tworzenie, mutacje i odczyt kanału. Limit jest naliczany przed kosztownym backfillem.
+
+Nowe zdarzenie zachowuje kanoniczną unię działek przed i po zmianie. Dopasowania powstają atomowo
+z udanym importem, a nie podczas odczytu przez użytkownika. Pauza zatrzymuje nowe dopasowania;
+wznowienie świadomie zaczyna od ostatniego udanego importu, więc zdarzenia z czasu pauzy nie są
+uzupełniane. Migracja starych obserwacji jest idempotentna, ograniczona do 90 dni i nie usuwa
+`localStorage` przed potwierdzeniem serwera. Dla zdarzeń sprzed migracji dopasowanie OLD+NEW jest
+odtwarzane best-effort z bieżącego i poprzedniego snapshotu tej samej sprawy.
+
+Kanał zdarzeń stronicuje po `radar_matches.id` (`after_match_id`), dzięki czemu późny backfill nie
+może zostać pominięty przez starszy identyfikator zdarzenia. Jedno dopasowanie jest jednym rekordem
+kanału; klient może zwinąć powtórzenia tej samej sprawy. Odpowiedź ma maksymalnie 50 rekordów i
+256 KiB, a lista działek w snapshotcie jest ograniczona do 20 pozycji z flagą skrócenia.
 
 Detekcja jest deterministyczna i nie korzysta z AI. Zdarzenia są publikowane tylko dla importów ze
 statusem `success`; objaśnienie AI pozostaje osobną funkcją uruchamianą na żądanie w karcie sprawy.
+
+Test migracji i API wymaga wyłącznie izolowanej bazy PostGIS:
+
+```powershell
+$env:RADAR_TEST_DATABASE='1'
+$env:DATABASE_URL='postgresql://radar:radar_test@127.0.0.1:PORT/radar'
+$env:PGSSLMODE='disable'
+npm run test:postgis
+```
+
+Harness sam tworzy i usuwa losową bazę; skrypty wykonujące `TRUNCATE` odmawiają pracy poza
+loopbackiem i bazą o prefiksie `radar_test_`.
+
+Kolejność rolloutu: migracja 011 → kod z API wyłączonym → `verify:radar-import` i smoke → osobna
+decyzja o `RADAR_SERVER_ENABLED=1`. Po aktywacji nie wolno cofać samego importera do wersji bez
+projekcji. Jeżeli rollback aplikacji jest konieczny, API pozostaje wyłączone, housekeeping odzyskuje
+brakujące projekcje przez `npm run maintenance:radar-housekeeping`, a weryfikacja musi ponownie
+przejść przed włączeniem.
+
+Po włączeniu routera bezpieczny, read-only smoke profilu uruchamia się bez tworzenia danych:
+
+```powershell
+$env:SMOKE_EXPECT_RADAR_SERVER='1'
+npm run smoke
+```
 
 ## Architektura
 

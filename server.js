@@ -9,9 +9,11 @@ import {
 } from './lib/case-context.mjs';
 import { readDataStatus, readHealth } from './lib/service-health.mjs';
 import { createPrivateMaintenancePreflightHandler } from './lib/maintenance-private-api.mjs';
+import { createRadarSubscriptionsRouter } from './lib/radar-subscriptions.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+app.set('trust proxy', 1);
 const VOIVODESHIPS = new Set([
   'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie', 'łódzkie', 'małopolskie',
   'mazowieckie', 'opolskie', 'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
@@ -83,6 +85,10 @@ app.get('/api/data-status', async (_request, response) => {
 app.get('/api/internal/maintenance/preflight', createPrivateMaintenancePreflightHandler({
   database: pool,
 }));
+
+if (process.env.RADAR_SERVER_ENABLED === '1') {
+  app.use('/api/radar', createRadarSubscriptionsRouter({ database: pool }));
+}
 
 app.get('/api/meta', async (request, response, next) => {
   try {

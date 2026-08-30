@@ -29,6 +29,16 @@ assert.ok(suggestions.every((item) => item.label && item.context));
 const radar = await get('/api/radar');
 assert.deepEqual(radar.events, []);
 
+let radarProfileSmoke = false;
+if (process.env.SMOKE_EXPECT_RADAR_SERVER === '1') {
+  const response = await fetch(`${baseUrl}/api/radar/profile`);
+  assert.equal(response.status, 401, `radar profile smoke returned ${response.status}`);
+  assert.match(response.headers.get('cache-control') || '', /no-store/);
+  assert.match(response.headers.get('vary') || '', /Cookie/);
+  assert.deepEqual(await response.json(), { error: 'profile_unavailable' });
+  radarProfileSmoke = true;
+}
+
 const overview = await get('/api/map?bbox=14,48.8,24.3,55.3&zoom=6');
 assert.equal(overview.type, 'FeatureCollection');
 assert.equal(overview.features.length, 16, 'country map should show 16 voivodeships');
@@ -79,4 +89,5 @@ console.log(JSON.stringify({
   selected_parcels: detail.parcels.length,
   suggestions: suggestions.length,
   radar_events: radar.events.length,
+  radar_profile_smoke: radarProfileSmoke,
 }));
