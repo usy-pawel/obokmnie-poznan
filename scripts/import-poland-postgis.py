@@ -612,7 +612,7 @@ def run_import():
     global ACTIVE_IMPORT_ID
     started = time.perf_counter()
     if DOWNLOAD_ARCHIVES:
-        from scripts.download_gunb_archives import download_archives
+        from download_gunb_archives import download_archives
         download_archives(ZIP_DIR)
     archives = source_archives()
     newest = parse_date(PERIOD_END) if PERIOD_END else None
