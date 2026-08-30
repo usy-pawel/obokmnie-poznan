@@ -32,7 +32,11 @@ test('API exposes health, overview, search and case detail routes', () => {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
-  assert.match(server, /ST_SnapToGrid/);
+  assert.match(server, /cluster_scope: 'voivodeship'/);
+  assert.match(server, /!query && !region/);
+  assert.match(server, /min\(left\(cp\.parcel_id,4\)\) AS powiat/);
+  assert.match(server, /VOIVODESHIPS/);
+  assert.match(server, /c\.voivodeship=\$6/);
   assert.match(server, /params\.slice\(0, 5\)/);
   assert.match(server, /exact_city/);
   assert.match(server, /parcel_count/);
@@ -53,6 +57,8 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /detail\?\.parcels/);
   assert.match(frontend, /loadSuggestions/);
   assert.match(frontend, /aria-activedescendant/);
+  assert.match(frontend, /renderProvinceChoices/);
+  assert.match(frontend, /cameraForBounds/);
   assert.match(html, /data-base-layer="streets" aria-pressed="true"/);
   assert.match(html, /role="combobox"/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);

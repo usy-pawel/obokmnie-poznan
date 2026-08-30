@@ -7,6 +7,7 @@ const state = {
   features: [],
   filter: 'all',
   query: '',
+  region: null,
   selectedCaseKey: null,
   selectedDetail: null,
   listLimit: LIST_SIZE,
@@ -33,6 +34,10 @@ const ui = {
   suggestions: document.querySelector('#search-suggestions'),
   loadMore: document.querySelector('#load-more'),
   listNote: document.querySelector('#list-note'),
+  casesHeading: document.querySelector('#cases-heading'),
+  casesEyebrow: document.querySelector('#cases-eyebrow'),
+  countryReset: document.querySelector('#country-reset'),
+  locationScope: document.querySelector('#location-scope'),
   baseLayerButtons: [...document.querySelectorAll('[data-base-layer]')],
   zoomHint: document.querySelector('#zoom-hint'),
   dataRange: document.querySelector('#data-range'),
@@ -173,18 +178,73 @@ function boundsForFeatures(features) {
   );
 }
 
+function zoomToCluster(feature) {
+  const item = feature.properties || {};
+  let clusterBounds = item.bounds;
+  if (typeof clusterBounds === 'string') {
+    try { clusterBounds = JSON.parse(clusterBounds); } catch { clusterBounds = null; }
+  }
+  if (item.cluster_scope === 'voivodeship' && Array.isArray(clusterBounds)) {
+    state.region = item.region;
+    ui.locationScope.textContent = item.label;
+    ui.countryReset.setAttribute('aria-label', `${item.label}. Wróć do widoku całej Polski`);
+    const camera = state.map.cameraForBounds(clusterBounds, { padding: 70 });
+    state.map.easeTo({ center: camera.center, zoom: camera.zoom - 0.5, duration: 800 });
+    return;
+  }
+  state.map.easeTo({
+    center: feature.geometry.coordinates,
+    zoom: Math.max(state.map.getZoom() + 2, 10.2),
+    duration: 650,
+  });
+}
+
+function renderProvinceChoices(features) {
+  ui.list.replaceChildren();
+  ui.list.classList.add('is-province-list');
+  ui.casesEyebrow.textContent = 'Cała Polska';
+  ui.casesHeading.textContent = 'Wybierz województwo';
+  ui.resultCount.textContent = features.length.toLocaleString('pl-PL');
+  ui.listNote.textContent = 'Wybierz region na mapie lub z listy.';
+  ui.empty.hidden = true;
+  ui.loadMore.hidden = true;
+  for (const feature of [...features].sort((a, b) => a.properties.label.localeCompare(b.properties.label, 'pl'))) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'province-card';
+    button.setAttribute('aria-label', `${feature.properties.label}, ${Number(feature.properties.count).toLocaleString('pl-PL')} spraw`);
+    const name = document.createElement('strong');
+    name.textContent = feature.properties.label;
+    const count = document.createElement('span');
+    count.textContent = `${Number(feature.properties.count).toLocaleString('pl-PL')} spraw`;
+    button.append(name, count);
+    button.addEventListener('click', () => zoomToCluster(feature));
+    ui.list.append(button);
+  }
+}
+
 function renderCases() {
   const cases = state.features.filter((feature) => !feature.properties.cluster);
+  const clusters = state.features.filter((feature) => feature.properties.cluster);
+  const provinces = clusters.filter((feature) => feature.properties.cluster_scope === 'voivodeship');
+  if (provinces.length && !state.query) {
+    renderProvinceChoices(provinces);
+    return;
+  }
+  ui.list.classList.remove('is-province-list');
+  ui.casesEyebrow.textContent = 'Potwierdzone lokalizacje';
+  ui.casesHeading.textContent = 'Sprawy na mapie';
   const selected = cases.find((feature) => caseKey(feature.properties) === state.selectedCaseKey);
   const ordered = selected ? [selected, ...cases.filter((feature) => feature !== selected)] : cases;
   const displayed = ordered.slice(0, state.listLimit);
   ui.list.replaceChildren();
-  ui.resultCount.textContent = cases.length.toLocaleString('pl-PL');
-  ui.empty.hidden = cases.length !== 0;
+  const visibleCount = cases.length || clusters.reduce((sum, feature) => sum + Number(feature.properties.count || 0), 0);
+  ui.resultCount.textContent = visibleCount.toLocaleString('pl-PL');
+  ui.empty.hidden = cases.length !== 0 || clusters.length !== 0;
   ui.loadMore.hidden = displayed.length >= cases.length;
 
-  if (state.map?.getZoom() < 10 && !state.query) {
-    ui.listNote.textContent = 'Przybliż mapę lub wyszukaj miejsce, aby zobaczyć pojedyncze sprawy.';
+  if (clusters.length && !state.query) {
+    ui.listNote.textContent = 'Kliknij grupę na mapie, aby zobaczyć pojedyncze sprawy.';
   } else if (state.query) {
     ui.listNote.textContent = `Sprawy widoczne na mapie dla: „${state.query}”.`;
   } else {
@@ -268,6 +328,11 @@ function currentBbox() {
 
 async function loadMapData() {
   if (!state.map?.getSource('cases')) return;
+  if (state.map.getZoom() < 5.6 && !state.query && state.region) {
+    state.region = null;
+    ui.locationScope.textContent = 'Cała Polska';
+    ui.countryReset.setAttribute('aria-label', 'Cała Polska');
+  }
   state.requestController?.abort();
   state.requestController = new AbortController();
   const params = new URLSearchParams({
@@ -276,6 +341,7 @@ async function loadMapData() {
   });
   if (state.filter !== 'all') params.set('type', state.filter);
   if (state.query) params.set('q', state.query);
+  if (state.region) params.set('region', state.region);
   ui.loading.classList.remove('is-hidden');
   try {
     const response = await fetch(`/api/map?${params}`, { signal: state.requestController.signal });
@@ -383,11 +449,23 @@ function initializeMap() {
     state.map.addSource('selected-parcels', { type: 'geojson', data: emptyCollection() });
     state.map.addLayer({
       id: 'case-clusters', type: 'circle', source: 'cases', filter: ['==', ['get', 'cluster'], true],
-      paint: { 'circle-color': '#152c2a', 'circle-radius': ['interpolate', ['linear'], ['get', 'count'], 1, 15, 100, 24, 1000, 34], 'circle-stroke-color': '#fffdf8', 'circle-stroke-width': 2 },
+      paint: {
+        'circle-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#fffdf8', '#152c2a'],
+        'circle-radius': ['match', ['get', 'cluster_scope'], 'voivodeship', 22, ['interpolate', ['linear'], ['get', 'count'], 1, 14, 100, 20, 1000, 27]],
+        'circle-stroke-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#152c2a', '#fffdf8'],
+        'circle-stroke-width': 2,
+      },
     });
     state.map.addLayer({
       id: 'cluster-count', type: 'symbol', source: 'cases', filter: ['==', ['get', 'cluster'], true],
-      layout: { 'text-field': ['to-string', ['get', 'count']], 'text-size': 12 }, paint: { 'text-color': '#ffffff' },
+      layout: { 'text-field': ['to-string', ['get', 'count']], 'text-size': ['match', ['get', 'cluster_scope'], 'voivodeship', 9, 11] },
+      paint: { 'text-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#152c2a', '#ffffff'] },
+    });
+    state.map.addLayer({
+      id: 'province-labels', type: 'symbol', source: 'cases',
+      filter: ['==', ['get', 'cluster_scope'], 'voivodeship'],
+      layout: { 'text-field': ['get', 'label'], 'text-size': 10, 'text-offset': [0, 3], 'text-anchor': 'top', 'text-max-width': 11 },
+      paint: { 'text-color': '#152c2a', 'text-halo-color': '#fffdf8', 'text-halo-width': 2 },
     });
     state.map.addLayer({
       id: 'case-points', type: 'circle', source: 'cases', filter: ['!=', ['get', 'cluster'], true],
@@ -396,7 +474,7 @@ function initializeMap() {
     state.map.addLayer({ id: 'selected-fill', type: 'fill', source: 'selected-parcels', paint: { 'fill-color': '#f3b841', 'fill-opacity': 0.34 } });
     state.map.addLayer({ id: 'selected-line', type: 'line', source: 'selected-parcels', paint: { 'line-color': '#152c2a', 'line-width': 3 } });
     setBaseLayer(state.baseLayer);
-    state.map.on('click', 'case-clusters', (event) => state.map.easeTo({ center: event.features[0].geometry.coordinates, zoom: Math.min(state.map.getZoom() + 2, 12) }));
+    state.map.on('click', 'case-clusters', (event) => zoomToCluster(event.features[0]));
     state.map.on('click', 'case-points', (event) => {
       void selectCase(caseKey(event.features[0].properties), {
         moveMap: true, scrollToCard: true, toggle: false,
@@ -428,10 +506,20 @@ ui.filters.forEach((button) => button.addEventListener('click', () => {
 
 ui.search.addEventListener('input', () => {
   state.query = ui.search.value.trim();
+  state.region = null;
+  ui.locationScope.textContent = 'Cała Polska';
+  ui.countryReset.setAttribute('aria-label', 'Cała Polska');
   if (!state.query) state.lastFittedQuery = '';
   state.listLimit = LIST_SIZE;
   scheduleSuggestions(state.query);
   scheduleMapData(320);
+});
+
+ui.countryReset.addEventListener('click', () => {
+  state.region = null;
+  ui.locationScope.textContent = 'Cała Polska';
+  ui.countryReset.setAttribute('aria-label', 'Cała Polska');
+  state.map.easeTo({ center: [19.15, 52.1], zoom: 5.35, duration: 700 });
 });
 
 ui.search.addEventListener('focus', () => {

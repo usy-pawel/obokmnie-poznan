@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=polska-1" />
+    <link rel="stylesheet" href="/styles.css?v=polska-2" />
   </head>
   <body>
     <div class="page-shell">
@@ -21,10 +21,10 @@
           <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
           <span>obok<span>mnie</span></span>
         </a>
-        <div class="location-chip">
+        <button class="location-chip" id="country-reset" type="button" aria-label="Cała Polska">
           <span class="location-dot" aria-hidden="true"></span>
-          Cała Polska
-        </div>
+          <span id="location-scope">Cała Polska</span>
+        </button>
       </header>
 
       <main>
@@ -91,7 +91,7 @@
           <aside class="cases-panel" aria-labelledby="cases-heading">
             <div class="cases-heading-row">
               <div>
-                <p class="eyebrow">Potwierdzone lokalizacje</p>
+                <p class="eyebrow" id="cases-eyebrow">Potwierdzone lokalizacje</p>
                 <h2 id="cases-heading">Sprawy na mapie</h2>
               </div>
               <span class="result-count" id="result-count">—</span>
@@ -156,6 +156,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-6"></script>
+    <script type="module" src="/app.js?v=polska-8"></script>
   </body>
 </html>

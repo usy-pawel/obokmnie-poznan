@@ -23,8 +23,18 @@ assert.ok(suggestions.every((item) => item.label && item.context));
 
 const overview = await get('/api/map?bbox=14,48.8,24.3,55.3&zoom=6');
 assert.equal(overview.type, 'FeatureCollection');
-assert.ok(overview.features.length > 0, 'country map is empty');
+assert.equal(overview.features.length, 16, 'country map should show 16 voivodeships');
 assert.ok(overview.features.every((feature) => feature.properties.cluster === true));
+assert.ok(overview.features.every((feature) => feature.properties.cluster_scope === 'voivodeship'));
+assert.ok(overview.features.every((feature) => feature.properties.label && feature.properties.bounds.length === 4));
+
+const wielkopolskie = overview.features.find((feature) => feature.properties.region === 'wielkopolskie');
+assert.ok(wielkopolskie, 'Wielkopolskie is missing from country overview');
+const provinceBbox = wielkopolskie.properties.bounds.join(',');
+const provinceAreas = await get(`/api/map?bbox=${provinceBbox}&zoom=8&region=wielkopolskie`);
+assert.ok(provinceAreas.features.length > 0, 'Wielkopolskie powiat map is empty');
+assert.ok(provinceAreas.features.every((feature) => feature.properties.cluster_scope === 'powiat'));
+assert.ok(provinceAreas.features.every((feature) => feature.properties.label.startsWith('30')));
 
 const poznan = await get('/api/map?bbox=16.7,52.25,17.15,52.6&zoom=12');
 assert.equal(poznan.type, 'FeatureCollection');
@@ -41,6 +51,7 @@ console.log(JSON.stringify({
   published_cases: meta.published_cases,
   voivodeships: meta.voivodeships,
   country_clusters: overview.features.length,
+  wielkopolska_powiaty: provinceAreas.features.length,
   poznan_cases: poznan.features.length,
   selected_parcels: detail.parcels.length,
   suggestions: suggestions.length,

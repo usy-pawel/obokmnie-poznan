@@ -4,6 +4,11 @@ import compression from 'compression';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const VOIVODESHIPS = new Set([
+  'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie', 'łódzkie', 'małopolskie',
+  'mazowieckie', 'opolskie', 'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
+  'świętokrzyskie', 'warmińsko-mazurskie', 'wielkopolskie', 'zachodniopomorskie',
+]);
 const pool = process.env.DATABASE_URL
   ? new pg.Pool({ connectionString: process.env.DATABASE_URL, ssl: process.env.PGSSLMODE === 'disable' ? false : { rejectUnauthorized: false }, max: 10 })
   : null;
@@ -41,21 +46,59 @@ app.get('/api/map', async (request, response, next) => {
     if (bbox.length !== 4 || bbox.some((value) => !Number.isFinite(value))) return response.status(400).json({ error: 'invalid_bbox' });
     const type = ['wniosek_decyzja', 'zgloszenie'].includes(request.query.type) ? request.query.type : null;
     const query = String(request.query.q || '').trim();
-    const params = [...bbox, type, query || null];
-    if (zoom < 10 && !query) {
-      const grid = zoom < 7 ? 0.35 : zoom < 9 ? 0.12 : 0.04;
+    const requestedRegion = String(request.query.region || '').trim().toLocaleLowerCase('pl-PL');
+    const region = VOIVODESHIPS.has(requestedRegion) ? requestedRegion : null;
+    const params = [...bbox, type, query || null, region];
+    if (zoom < 7.5 && !query && !region) {
       const result = await pool.query(`
-        SELECT ST_X(ST_Centroid(ST_Collect(location))) AS lng,
+        SELECT voivodeship,
+               ST_X(ST_Centroid(ST_Collect(location))) AS lng,
                ST_Y(ST_Centroid(ST_Collect(location))) AS lat,
+               min(ST_X(location)) AS min_lng, min(ST_Y(location)) AS min_lat,
+               max(ST_X(location)) AS max_lng, max(ST_Y(location)) AS max_lat,
                count(*)::int AS count
         FROM cases
         WHERE published AND location && ST_MakeEnvelope($1,$2,$3,$4,4326)
           AND ($5::text IS NULL OR source_type=$5)
-        GROUP BY ST_SnapToGrid(location, ${grid})
-        LIMIT 5000
-      `, params.slice(0, 5));
+          AND ($6::text IS NULL OR voivodeship=$6)
+        GROUP BY voivodeship
+        ORDER BY voivodeship
+      `, [...params.slice(0, 5), region]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
-        type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] }, properties: { cluster: true, count: row.count },
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
+        properties: {
+          cluster: true,
+          cluster_scope: 'voivodeship',
+          count: row.count,
+          label: row.voivodeship.charAt(0).toLocaleUpperCase('pl-PL') + row.voivodeship.slice(1),
+          region: row.voivodeship,
+          bounds: [row.min_lng, row.min_lat, row.max_lng, row.max_lat].map(Number),
+        },
+      })) });
+    }
+    if (zoom < 10 && !query) {
+      const result = await pool.query(`
+        WITH scoped AS (
+          SELECT c.id, c.location, min(left(cp.parcel_id,4)) AS powiat
+          FROM cases c
+          JOIN case_parcels cp ON cp.case_id=c.id
+          WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
+            AND ($5::text IS NULL OR c.source_type=$5)
+            AND ($6::text IS NULL OR c.voivodeship=$6)
+          GROUP BY c.id, c.location
+        )
+        SELECT powiat AS label,
+               ST_X(ST_Centroid(ST_Collect(location))) AS lng,
+               ST_Y(ST_Centroid(ST_Collect(location))) AS lat,
+               count(*)::int AS count
+        FROM scoped
+        GROUP BY powiat
+        LIMIT 5000
+      `, [...params.slice(0, 5), region]);
+      return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
+        type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
+        properties: { cluster: true, cluster_scope: 'powiat', count: row.count, label: row.label },
       })) });
     }
     const result = await pool.query(`
@@ -75,6 +118,7 @@ app.get('/api/map', async (request, response, next) => {
       FROM cases c CROSS JOIN exact_city
       WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
         AND ($5::text IS NULL OR c.source_type=$5)
+        AND ($7::text IS NULL OR c.voivodeship=$7)
         AND ($6::text IS NULL
           OR (exact_city.found AND lower(c.city)=lower($6))
           OR (NOT exact_city.found AND (c.search_vector @@ plainto_tsquery('simple',$6)
