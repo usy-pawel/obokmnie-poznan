@@ -77,6 +77,33 @@ app.get('/api/map', async (request, response, next) => {
         },
       })) });
     }
+    if (zoom < 8.2 && !query && region) {
+      const result = await pool.query(`
+        WITH clustered AS (
+          SELECT location, ST_ClusterKMeans(location, 8) OVER () AS area_id
+          FROM cases
+          WHERE published AND voivodeship=$2
+            AND ($1::text IS NULL OR source_type=$1)
+        )
+        SELECT area_id,
+               ST_X(ST_Centroid(ST_Collect(location))) AS lng,
+               ST_Y(ST_Centroid(ST_Collect(location))) AS lat,
+               min(ST_X(location)) AS min_lng, min(ST_Y(location)) AS min_lat,
+               max(ST_X(location)) AS max_lng, max(ST_Y(location)) AS max_lat,
+               count(*)::int AS count
+        FROM clustered
+        GROUP BY area_id
+        ORDER BY area_id
+      `, [type, region]);
+      return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
+        type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
+        properties: {
+          cluster: true, cluster_scope: 'area', count: row.count,
+          label: `Obszar ${Number(row.area_id) + 1}`,
+          bounds: [row.min_lng, row.min_lat, row.max_lng, row.max_lat].map(Number),
+        },
+      })) });
+    }
     if (zoom < 10 && !query) {
       const result = await pool.query(`
         WITH scoped AS (
@@ -91,6 +118,8 @@ app.get('/api/map', async (request, response, next) => {
         SELECT powiat AS label,
                ST_X(ST_Centroid(ST_Collect(location))) AS lng,
                ST_Y(ST_Centroid(ST_Collect(location))) AS lat,
+               min(ST_X(location)) AS min_lng, min(ST_Y(location)) AS min_lat,
+               max(ST_X(location)) AS max_lng, max(ST_Y(location)) AS max_lat,
                count(*)::int AS count
         FROM scoped
         GROUP BY powiat
@@ -98,7 +127,38 @@ app.get('/api/map', async (request, response, next) => {
       `, [...params.slice(0, 5), region]);
       return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
         type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
-        properties: { cluster: true, cluster_scope: 'powiat', count: row.count, label: row.label },
+        properties: {
+          cluster: true, cluster_scope: 'powiat', count: row.count, label: `Powiat ${row.label}`,
+          bounds: [row.min_lng, row.min_lat, row.max_lng, row.max_lat].map(Number),
+        },
+      })) });
+    }
+    if (zoom < 14 && !query) {
+      const result = await pool.query(`
+        WITH clustered AS (
+          SELECT location, ST_ClusterKMeans(location, 12) OVER () AS group_id
+          FROM cases c
+          WHERE c.published AND c.location && ST_MakeEnvelope($1,$2,$3,$4,4326)
+            AND ($5::text IS NULL OR c.source_type=$5)
+            AND ($6::text IS NULL OR c.voivodeship=$6)
+        )
+        SELECT group_id,
+               ST_X(ST_Centroid(ST_Collect(location))) AS lng,
+               ST_Y(ST_Centroid(ST_Collect(location))) AS lat,
+               min(ST_X(location)) AS min_lng, min(ST_Y(location)) AS min_lat,
+               max(ST_X(location)) AS max_lng, max(ST_Y(location)) AS max_lat,
+               count(*)::int AS count
+        FROM clustered
+        GROUP BY group_id
+        ORDER BY group_id
+      `, [...params.slice(0, 5), region]);
+      return response.json({ type: 'FeatureCollection', features: result.rows.map((row) => ({
+        type: 'Feature', geometry: { type: 'Point', coordinates: [row.lng, row.lat] },
+        properties: {
+          cluster: true, cluster_scope: 'local', count: row.count,
+          label: `Grupa ${Number(row.group_id) + 1}`,
+          bounds: [row.min_lng, row.min_lat, row.max_lng, row.max_lat].map(Number),
+        },
       })) });
     }
     const result = await pool.query(`

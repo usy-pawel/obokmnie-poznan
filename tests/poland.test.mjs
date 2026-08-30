@@ -2,13 +2,14 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, migration, integrityMigration, cityIndexMigration, frontend, html, importer, migrateScript] = await Promise.all([
+const [server, migration, integrityMigration, cityIndexMigration, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/003_data_integrity.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/004_exact_city_index.sql', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
+  readFile(new URL('../public/styles.css', import.meta.url), 'utf8'),
   readFile(new URL('../scripts/import-poland-postgis.py', import.meta.url), 'utf8'),
   readFile(new URL('../scripts/migrate.mjs', import.meta.url), 'utf8'),
 ]);
@@ -33,6 +34,9 @@ test('API exposes health, overview, search and case detail routes', () => {
   }
   assert.match(server, /ST_MakeEnvelope/);
   assert.match(server, /cluster_scope: 'voivodeship'/);
+  assert.match(server, /ST_ClusterKMeans\(location, 8\)/);
+  assert.match(server, /ST_ClusterKMeans\(location, 12\)/);
+  assert.match(server, /cluster_scope: 'local'/);
   assert.match(server, /!query && !region/);
   assert.match(server, /min\(left\(cp\.parcel_id,4\)\) AS powiat/);
   assert.match(server, /VOIVODESHIPS/);
@@ -58,7 +62,11 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(frontend, /loadSuggestions/);
   assert.match(frontend, /aria-activedescendant/);
   assert.match(frontend, /renderProvinceChoices/);
+  assert.match(frontend, /renderClusterChoices/);
   assert.match(frontend, /cameraForBounds/);
+  assert.match(frontend, /state\.requestController === controller/);
+  assert.doesNotMatch(styles, /\.map-loading\s*\{[^}]*inset:\s*0/s);
+  assert.match(styles, /\.map-loading\s*\{[^}]*pointer-events:\s*none/s);
   assert.match(html, /data-base-layer="streets" aria-pressed="true"/);
   assert.match(html, /role="combobox"/);
   assert.doesNotMatch(frontend, /wielkopolska-cases\.geojson/);

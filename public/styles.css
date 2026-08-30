@@ -342,24 +342,30 @@ button { color: inherit; }
 
 .map-loading {
   position: absolute;
-  inset: 0;
+  top: 14px;
+  right: 57px;
   z-index: 3;
-  display: grid;
-  place-content: center;
-  justify-items: center;
-  gap: 12px;
-  background: #e9eee9;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  border: 1px solid rgba(21, 44, 42, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 253, 248, 0.94);
+  box-shadow: 0 5px 18px rgba(21, 44, 42, 0.12);
   color: var(--ink-soft);
   transition: opacity 220ms ease;
+  pointer-events: none;
 }
 
 .map-loading.is-hidden { opacity: 0; pointer-events: none; }
 .map-loading.is-error { color: #812e25; }
+.map-loading p { margin: 0; font-size: 10px; font-weight: 750; }
 
 .loader {
-  width: 31px;
-  height: 31px;
-  border: 3px solid rgba(21, 44, 42, 0.14);
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(21, 44, 42, 0.14);
   border-top-color: var(--permit);
   border-radius: 50%;
   animation: spin 0.8s linear infinite;
@@ -479,6 +485,28 @@ button { color: inherit; }
 .province-card:focus-visible { outline: 3px solid rgba(243, 184, 65, 0.55); outline-offset: 1px; }
 .province-card strong { max-width: 100%; font-size: 11px; line-height: 1.25; overflow-wrap: anywhere; }
 .province-card span { color: var(--ink-soft); font-size: 9px; }
+
+.cases-list.is-cluster-list { display: grid; gap: 8px; }
+
+.cluster-card {
+  min-height: 54px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--ink);
+  cursor: pointer;
+  text-align: left;
+}
+
+.cluster-card:hover { border-color: var(--notice); background: #f5f7f2; }
+.cluster-card:focus-visible { outline: 3px solid rgba(243, 184, 65, 0.55); outline-offset: 1px; }
+.cluster-card strong { font-size: 11px; }
+.cluster-card span { flex: 0 0 auto; color: var(--ink-soft); font-size: 10px; }
 
 .case-card {
   margin-bottom: 10px;
@@ -678,6 +706,8 @@ footer {
   .filter-button { flex: 1; padding-inline: 8px; }
   .explorer { border-radius: 17px; }
   .map-card { min-height: 455px; }
+  .map-loading { top: 13px; right: 52px; padding: 7px; }
+  .map-loading p { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
   .map-legend { bottom: 78px; gap: 8px; max-width: calc(100% - 28px); flex-wrap: wrap; }
   .base-layer-switch { top: 12px; left: 12px; }
   .zoom-hint { top: 61px; right: 55px; left: 12px; width: fit-content; }

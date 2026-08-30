@@ -12,7 +12,7 @@
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
-    <link rel="stylesheet" href="/styles.css?v=polska-2" />
+    <link rel="stylesheet" href="/styles.css?v=polska-3" />
   </head>
   <body>
     <div class="page-shell">
@@ -76,9 +76,9 @@
               <button class="is-active" type="button" data-base-layer="streets" aria-pressed="true">Mapa</button>
               <button type="button" data-base-layer="aerial" aria-pressed="false">Zdjęcie</button>
             </div>
-            <div class="map-loading" id="map-loading">
+            <div class="map-loading" id="map-loading" role="status" aria-live="polite" aria-hidden="false">
               <span class="loader"></span>
-              <p>Ładowanie mapy Polski…</p>
+              <p>Odświeżam dane…</p>
             </div>
             <div class="map-legend" aria-label="Legenda mapy">
               <span><i class="legend-cluster"></i>Grupa spraw</span>
@@ -156,6 +156,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-8"></script>
+    <script type="module" src="/app.js?v=polska-10"></script>
   </body>
 </html>

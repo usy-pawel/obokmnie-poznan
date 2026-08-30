@@ -31,12 +31,21 @@ assert.ok(overview.features.every((feature) => feature.properties.label && featu
 const wielkopolskie = overview.features.find((feature) => feature.properties.region === 'wielkopolskie');
 assert.ok(wielkopolskie, 'Wielkopolskie is missing from country overview');
 const provinceBbox = wielkopolskie.properties.bounds.join(',');
-const provinceAreas = await get(`/api/map?bbox=${provinceBbox}&zoom=8&region=wielkopolskie`);
+const provinceAreas = await get(`/api/map?bbox=${provinceBbox}&zoom=7&region=wielkopolskie`);
 assert.ok(provinceAreas.features.length > 0, 'Wielkopolskie powiat map is empty');
-assert.ok(provinceAreas.features.every((feature) => feature.properties.cluster_scope === 'powiat'));
-assert.ok(provinceAreas.features.every((feature) => feature.properties.label.startsWith('30')));
+assert.ok(provinceAreas.features.length <= 8, 'province overview has too many areas');
+assert.ok(provinceAreas.features.every((feature) => feature.properties.cluster_scope === 'area'));
+const areaBbox = provinceAreas.features[0].properties.bounds.join(',');
+const powiatAreas = await get(`/api/map?bbox=${areaBbox}&zoom=8.6&region=wielkopolskie`);
+assert.ok(powiatAreas.features.length > 0, 'powiat map is empty');
+assert.ok(powiatAreas.features.every((feature) => feature.properties.cluster_scope === 'powiat'));
+assert.ok(powiatAreas.features.every((feature) => feature.properties.label.startsWith('Powiat 30')));
+const powiatBbox = powiatAreas.features[0].properties.bounds.join(',');
+const localAreas = await get(`/api/map?bbox=${powiatBbox}&zoom=10.5&region=wielkopolskie`);
+assert.ok(localAreas.features.length > 0 && localAreas.features.length <= 12, 'invalid local groups');
+assert.ok(localAreas.features.every((feature) => feature.properties.cluster_scope === 'local'));
 
-const poznan = await get('/api/map?bbox=16.7,52.25,17.15,52.6&zoom=12');
+const poznan = await get('/api/map?bbox=16.7,52.25,17.15,52.6&zoom=14.2');
 assert.equal(poznan.type, 'FeatureCollection');
 assert.ok(poznan.features.length > 0, 'Poznań map is empty');
 assert.ok(poznan.features.every((feature) => feature.properties.case_key));
@@ -51,7 +60,9 @@ console.log(JSON.stringify({
   published_cases: meta.published_cases,
   voivodeships: meta.voivodeships,
   country_clusters: overview.features.length,
-  wielkopolska_powiaty: provinceAreas.features.length,
+  wielkopolska_areas: provinceAreas.features.length,
+  area_powiaty: powiatAreas.features.length,
+  local_groups: localAreas.features.length,
   poznan_cases: poznan.features.length,
   selected_parcels: detail.parcels.length,
   suggestions: suggestions.length,

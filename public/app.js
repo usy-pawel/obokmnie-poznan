@@ -188,8 +188,18 @@ function zoomToCluster(feature) {
     state.region = item.region;
     ui.locationScope.textContent = item.label;
     ui.countryReset.setAttribute('aria-label', `${item.label}. Wróć do widoku całej Polski`);
-    const camera = state.map.cameraForBounds(clusterBounds, { padding: 70 });
-    state.map.easeTo({ center: camera.center, zoom: camera.zoom - 0.5, duration: 800 });
+    const camera = state.map.cameraForBounds(clusterBounds, { padding: window.innerWidth <= 620 ? 28 : 54 });
+    state.map.easeTo({ center: camera.center, zoom: camera.zoom, duration: 800 });
+    return;
+  }
+  if (Array.isArray(clusterBounds)) {
+    const camera = state.map.cameraForBounds(clusterBounds, { padding: window.innerWidth <= 620 ? 34 : 64 });
+    const minimumZoom = item.cluster_scope === 'area'
+      ? 8.5
+      : item.cluster_scope === 'powiat'
+        ? 10.5
+        : 14.2;
+    state.map.easeTo({ center: camera.center, zoom: Math.max(camera.zoom, minimumZoom), duration: 700 });
     return;
   }
   state.map.easeTo({
@@ -199,8 +209,40 @@ function zoomToCluster(feature) {
   });
 }
 
+function renderClusterChoices(features) {
+  const scope = features[0]?.properties.cluster_scope;
+  const copy = {
+    area: ['Krok 2 z 4', ui.locationScope.textContent, 'Wybierz jeden z 8 obszarów województwa.'],
+    powiat: ['Krok 3 z 4', 'Powiaty na mapie', 'Wybierz powiat, aby przejść bliżej spraw.'],
+    local: ['Krok 4 z 4', 'Sprawy w okolicy', 'Wybierz grupę, aby zobaczyć pojedyncze sprawy.'],
+  }[scope] || ['Potwierdzone lokalizacje', 'Sprawy na mapie', 'Wybierz grupę na mapie.'];
+  ui.list.replaceChildren();
+  ui.list.classList.remove('is-province-list');
+  ui.list.classList.add('is-cluster-list');
+  ui.casesEyebrow.textContent = copy[0];
+  ui.casesHeading.textContent = copy[1];
+  ui.resultCount.textContent = features.reduce((sum, feature) => sum + Number(feature.properties.count || 0), 0).toLocaleString('pl-PL');
+  ui.listNote.textContent = `${copy[2]} Na mapie: ${features.length}.`;
+  ui.empty.hidden = true;
+  ui.loadMore.hidden = true;
+  for (const feature of [...features].sort((a, b) => Number(b.properties.count) - Number(a.properties.count))) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'cluster-card';
+    button.setAttribute('aria-label', `${feature.properties.label}, ${Number(feature.properties.count).toLocaleString('pl-PL')} spraw`);
+    const name = document.createElement('strong');
+    name.textContent = feature.properties.label;
+    const count = document.createElement('span');
+    count.textContent = `${Number(feature.properties.count).toLocaleString('pl-PL')} spraw`;
+    button.append(name, count);
+    button.addEventListener('click', () => zoomToCluster(feature));
+    ui.list.append(button);
+  }
+}
+
 function renderProvinceChoices(features) {
   ui.list.replaceChildren();
+  ui.list.classList.remove('is-cluster-list');
   ui.list.classList.add('is-province-list');
   ui.casesEyebrow.textContent = 'Cała Polska';
   ui.casesHeading.textContent = 'Wybierz województwo';
@@ -231,7 +273,11 @@ function renderCases() {
     renderProvinceChoices(provinces);
     return;
   }
-  ui.list.classList.remove('is-province-list');
+  if (clusters.length && !cases.length && !state.query) {
+    renderClusterChoices(clusters);
+    return;
+  }
+  ui.list.classList.remove('is-province-list', 'is-cluster-list');
   ui.casesEyebrow.textContent = 'Potwierdzone lokalizacje';
   ui.casesHeading.textContent = 'Sprawy na mapie';
   const selected = cases.find((feature) => caseKey(feature.properties) === state.selectedCaseKey);
@@ -334,7 +380,8 @@ async function loadMapData() {
     ui.countryReset.setAttribute('aria-label', 'Cała Polska');
   }
   state.requestController?.abort();
-  state.requestController = new AbortController();
+  const controller = new AbortController();
+  state.requestController = controller;
   const params = new URLSearchParams({
     bbox: currentBbox(),
     zoom: String(state.query ? 12 : state.map.getZoom()),
@@ -343,17 +390,21 @@ async function loadMapData() {
   if (state.query) params.set('q', state.query);
   if (state.region) params.set('region', state.region);
   ui.loading.classList.remove('is-hidden');
+  ui.loading.setAttribute('aria-hidden', 'false');
   try {
-    const response = await fetch(`/api/map?${params}`, { signal: state.requestController.signal });
+    const response = await fetch(`/api/map?${params}`, { signal: controller.signal });
     if (!response.ok) throw new Error(`API ${response.status}`);
     setMapFeatures(await response.json());
-    ui.zoomHint.textContent = state.map.getZoom() < 10 && !state.query
+    ui.zoomHint.textContent = state.map.getZoom() < 14 && !state.query
       ? 'Przybliż mapę, aby zobaczyć pojedyncze sprawy'
       : 'Kliknij punkt, aby zobaczyć działkę';
   } catch (error) {
     if (error.name !== 'AbortError') ui.listNote.textContent = 'Nie udało się pobrać danych. Spróbuj ponownie za chwilę.';
   } finally {
-    ui.loading.classList.add('is-hidden');
+    if (state.requestController === controller) {
+      ui.loading.classList.add('is-hidden');
+      ui.loading.setAttribute('aria-hidden', 'true');
+    }
   }
 }
 
@@ -450,16 +501,16 @@ function initializeMap() {
     state.map.addLayer({
       id: 'case-clusters', type: 'circle', source: 'cases', filter: ['==', ['get', 'cluster'], true],
       paint: {
-        'circle-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#fffdf8', '#152c2a'],
-        'circle-radius': ['match', ['get', 'cluster_scope'], 'voivodeship', 22, ['interpolate', ['linear'], ['get', 'count'], 1, 14, 100, 20, 1000, 27]],
+        'circle-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#fffdf8', 'area', '#f3b841', 'local', '#347c6c', '#152c2a'],
+        'circle-radius': ['match', ['get', 'cluster_scope'], 'voivodeship', 22, 'area', 23, 'powiat', 19, 17],
         'circle-stroke-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#152c2a', '#fffdf8'],
         'circle-stroke-width': 2,
       },
     });
     state.map.addLayer({
       id: 'cluster-count', type: 'symbol', source: 'cases', filter: ['==', ['get', 'cluster'], true],
-      layout: { 'text-field': ['to-string', ['get', 'count']], 'text-size': ['match', ['get', 'cluster_scope'], 'voivodeship', 9, 11] },
-      paint: { 'text-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#152c2a', '#ffffff'] },
+      layout: { 'text-field': ['to-string', ['get', 'count']], 'text-size': ['match', ['get', 'cluster_scope'], 'voivodeship', 9, 'area', 11, 10] },
+      paint: { 'text-color': ['match', ['get', 'cluster_scope'], 'voivodeship', '#152c2a', 'area', '#152c2a', '#ffffff'] },
     });
     state.map.addLayer({
       id: 'province-labels', type: 'symbol', source: 'cases',
