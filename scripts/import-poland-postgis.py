@@ -632,7 +632,7 @@ def load_postgres(stage, metrics, cutoff, newest, import_id):
             "voivodeships": provinces, "parcel_cache_rows": loaded_parcels,
             "case_parcel_refs": loaded_refs, "inactive_cases": inactive_cases,
         })
-        cursor.execute("UPDATE imports SET finished_at=now(),status='success',metrics=%s WHERE id=%s",
+        cursor.execute("UPDATE imports SET finished_at=clock_timestamp(),status='success',metrics=%s WHERE id=%s",
                        (json.dumps(metrics, ensure_ascii=False), import_id))
         connection.commit()
     connection.close()

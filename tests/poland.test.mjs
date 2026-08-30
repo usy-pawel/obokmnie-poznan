@@ -75,6 +75,7 @@ test('API exposes health, overview, search, radar, detail and lazy context route
   assert.match(importer, /seed_existing_parcels/);
   assert.match(importer, /case_fingerprint/);
   assert.match(importer, /set_config\('obokmnie\.import_id'/);
+  assert.match(importer, /finished_at=clock_timestamp\(\)/);
   assert.doesNotMatch(importer, /cursor\.executemany\(upsert_case, values\)\s+connection\.commit\(\)/);
   assert.match(importer, /source_active=false/);
   assert.match(importer, /validate_publication/);
