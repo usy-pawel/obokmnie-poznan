@@ -25,6 +25,7 @@ const RANGE_COPY = {
 
 const state = {
   map: null,
+  mapResizeObserver: null,
   features: [],
   filter: 'all',
   range: '1y',
@@ -813,6 +814,13 @@ function parcelFeatures(detail) {
   }));
 }
 
+function hasSameParcels(left, right) {
+  const leftIds = new Set((left?.parcels || []).map((parcel) => parcel.parcel_id).filter(Boolean));
+  const rightIds = new Set((right?.parcels || []).map((parcel) => parcel.parcel_id).filter(Boolean));
+  return leftIds.size > 0 && leftIds.size === rightIds.size
+    && [...leftIds].every((parcelId) => rightIds.has(parcelId));
+}
+
 function geometryPoints(geometry) {
   if (!geometry) return [];
   if (geometry.type === 'Point') return [geometry.coordinates];
@@ -951,6 +959,12 @@ function renderCaseContext(fragment, contextState) {
 }
 
 function renderCases() {
+  const focusedControl = ui.list.contains(document.activeElement)
+    ? {
+        caseKey: document.activeElement.closest('.case-card')?.dataset.caseId,
+        control: document.activeElement.dataset.caseControl,
+      }
+    : null;
   const cases = state.features.filter((feature) => !feature.properties.cluster);
   const clusters = state.features.filter((feature) => feature.properties.cluster);
   const provinces = clusters.filter((feature) => feature.properties.cluster_scope === 'voivodeship');
@@ -1032,6 +1046,17 @@ function renderCases() {
     button.setAttribute('aria-expanded', String(selected));
     button.addEventListener('click', () => { void selectCase(key, { moveMap: true }); });
     ui.list.append(fragment);
+  }
+  if (focusedControl?.caseKey) {
+    window.requestAnimationFrame(() => {
+      const card = [...ui.list.querySelectorAll('.case-card')]
+        .find((element) => element.dataset.caseId === focusedControl.caseKey);
+      const selector = focusedControl.control
+        ? `[data-case-control="${focusedControl.control}"]`
+        : '.case-card-button';
+      (card?.querySelector(selector) || card?.querySelector('.case-card-button'))
+        ?.focus({ preventScroll: true });
+    });
   }
 }
 
@@ -1161,6 +1186,7 @@ async function selectCase(key, options = {}) {
     if (scrollToCard) scrollSelectedCard();
     return;
   }
+  const previousDetail = state.selectedDetail;
   state.selectedCaseKey = key;
   state.selectedDetail = null;
   state.selectedContext = null;
@@ -1177,9 +1203,11 @@ async function selectCase(key, options = {}) {
     void loadCaseContext(key);
     if (moveMap) {
       if (showAerial) setBaseLayer('aerial');
-      const bounds = boundsForFeatures(features);
-      if (bounds) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 800 });
-      else if (state.selectedDetail.location) state.map.flyTo({ center: state.selectedDetail.location.coordinates, zoom: 16 });
+      if (!hasSameParcels(previousDetail, state.selectedDetail)) {
+        const bounds = boundsForFeatures(features);
+        if (bounds) state.map.fitBounds(bounds, { padding: 70, maxZoom: 17, duration: 800 });
+        else if (state.selectedDetail.location) state.map.flyTo({ center: state.selectedDetail.location.coordinates, zoom: 16 });
+      }
     }
     if (scrollToCard) scrollSelectedCard();
   } catch {
@@ -1210,6 +1238,18 @@ function initializeMap() {
   });
   state.map.addControl(new maplibregl.NavigationControl({ showCompass: false }), 'top-right');
   state.map.addControl(new maplibregl.AttributionControl({ compact: true }), 'bottom-right');
+  const mapElement = document.querySelector('#map');
+  if (typeof ResizeObserver !== 'undefined') {
+    state.mapResizeObserver?.disconnect();
+    state.mapResizeObserver = new ResizeObserver(() => { state.map?.resize(); });
+    state.mapResizeObserver.observe(mapElement);
+  }
+  const resizeVisibleMap = () => {
+    if (document.hidden) return;
+    window.requestAnimationFrame(() => { state.map?.resize(); });
+  };
+  window.addEventListener('resize', resizeVisibleMap);
+  document.addEventListener('visibilitychange', resizeVisibleMap);
 
   let layersInitializing = false;
   const setupLayers = () => {

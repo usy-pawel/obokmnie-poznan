@@ -11,7 +11,8 @@
     <title>Co budują w Polsce?</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
-    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.css" />
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
+      integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
     <link rel="stylesheet" href="/styles.css?v=polska-6" />
   </head>
   <body>
@@ -159,7 +160,7 @@
 
     <template id="case-card-template">
       <article class="case-card">
-        <button class="case-card-button" type="button">
+        <button class="case-card-button" type="button" data-case-control="toggle">
           <span class="case-topline">
             <span class="case-type"></span>
             <time class="case-date"></time>
@@ -197,20 +198,21 @@
               <p class="context-disclaimer"></p>
             </div>
           </section>
-          <button class="radar-action" type="button" disabled>
+          <button class="radar-action" type="button" data-case-control="radar" disabled>
             <span aria-hidden="true">◉</span> Obserwuj działkę w Radarze
           </button>
-          <button class="aerial-action" type="button">
+          <button class="aerial-action" type="button" data-case-control="aerial">
             <span aria-hidden="true">◫</span> Pokaż działkę na zdjęciu lotniczym
           </button>
-          <a class="source-link" href="https://wyszukiwarka.gunb.gov.pl/" target="_blank" rel="noreferrer">
+          <a class="source-link" data-case-control="source" href="https://wyszukiwarka.gunb.gov.pl/" target="_blank" rel="noreferrer">
             Otwórz wyszukiwarkę GUNB <span aria-hidden="true">↗</span>
           </a>
         </div>
       </article>
     </template>
 
-    <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-18"></script>
+    <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
+      integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
+    <script type="module" src="/app.js?v=polska-19"></script>
   </body>
 </html>

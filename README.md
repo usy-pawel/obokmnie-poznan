@@ -85,8 +85,12 @@ npm run check
 ```
 
 Kontrole obejmują składnię serwera, frontendu, migracji i importera oraz testy danych. GitHub Actions nie jest bramką wdrożenia.
-Pełna bramka wydania `npm run check:release` uruchamia dodatkowo migrację 010→011 oraz testy SQL/API
-na losowej bazie `radar_test_*` dostępnej wyłącznie przez loopback.
+Lokalne E2E mapy i Radaru uruchamia `npm run test:e2e`; polecenie instaluje przypięte Chromium
+do lokalnego cache i wykonuje testy desktop/mobile wyłącznie na syntetycznych danych oraz losowym
+porcie loopback. Nie wymaga sekretów ani połączenia z produkcją.
+
+Pełna bramka wydania `npm run check:release` uruchamia dodatkowo E2E, migrację 010→011 oraz testy
+SQL/API na losowej bazie `radar_test_*` dostępnej wyłącznie przez loopback.
 
 ## Aktualizacja danych
 

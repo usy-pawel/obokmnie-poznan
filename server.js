@@ -13,6 +13,7 @@ import { createRadarSubscriptionsRouter } from './lib/radar-subscriptions.mjs';
 
 const app = express();
 const port = Number(process.env.PORT || 3000);
+const host = process.env.HOST || '0.0.0.0';
 app.set('trust proxy', 1);
 const VOIVODESHIPS = new Set([
   'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie', 'łódzkie', 'małopolskie',
@@ -476,4 +477,8 @@ app.use((error, _request, response, _next) => {
   response.status(500).json({ error: 'internal_error' });
 });
 
-app.listen(port, '0.0.0.0', () => console.log(`obokmnie listening on ${port}`));
+const server = app.listen(port, host, () => {
+  const address = server.address();
+  const activePort = typeof address === 'object' && address ? address.port : port;
+  console.log(`obokmnie listening on ${host}:${activePort}`);
+});
