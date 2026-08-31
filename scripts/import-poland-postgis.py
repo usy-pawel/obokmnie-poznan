@@ -469,12 +469,15 @@ def postgres_connection():
 
 
 def run_radar_housekeeping():
-    """Recover projection gaps and purge expired private profiles after a successful import."""
+    """Recover projection gaps and purge expired private Radar data after a successful import."""
     connection = postgres_connection()
     recovered_imports = 0
     recovered_events = 0
     recovered_matches = 0
     purged_profiles = 0
+    purged_pending_emails = 0
+    purged_email_deliveries = 0
+    purged_email_suppressions = 0
     try:
         with connection.cursor() as cursor:
             cursor.execute("SET LOCAL lock_timeout='5s'")
@@ -497,26 +500,52 @@ def run_radar_housekeeping():
             if deleted < 1000:
                 break
 
+        for _batch in range(50):
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout='5s'")
+                cursor.execute("SET LOCAL statement_timeout='30s'")
+                cursor.execute("SELECT * FROM radar_purge_email_data(1000)")
+                pending, deliveries, suppressions = cursor.fetchone()
+            connection.commit()
+            purged_pending_emails += pending
+            purged_email_deliveries += deliveries
+            purged_email_suppressions += suppressions
+            if max(pending, deliveries, suppressions) < 1000:
+                break
+
         with connection.cursor() as cursor:
             cursor.execute("""
               SELECT
                 count(*) FILTER (WHERE projection.import_id IS NULL)::int,
                 (SELECT count(*)::int FROM radar_profiles
                  WHERE inactive_expires_at<=clock_timestamp()
-                    OR absolute_expires_at<=clock_timestamp())
+                    OR absolute_expires_at<=clock_timestamp()),
+                (SELECT count(*)::int FROM radar_email_subscriptions
+                 WHERE state='pending' AND unconfirmed_delete_at<=clock_timestamp()),
+                (SELECT count(*)::int FROM radar_email_deliveries
+                 WHERE expires_at<=clock_timestamp()),
+                (SELECT count(*)::int FROM radar_email_suppressions
+                 WHERE expires_at<=clock_timestamp())
               FROM imports imported
               LEFT JOIN radar_import_projections projection ON projection.import_id=imported.id
               WHERE imported.status='success' AND imported.finished_at IS NOT NULL
             """)
-            missing_projections, expired_profiles = cursor.fetchone()
+            (missing_projections, expired_profiles, expired_pending_emails,
+             expired_email_deliveries, expired_email_suppressions) = cursor.fetchone()
         connection.commit()
         return {
             "radar_recovered_imports": recovered_imports,
             "radar_recovered_events": recovered_events,
             "radar_recovered_matches": recovered_matches,
             "radar_purged_profiles": purged_profiles,
+            "radar_purged_pending_emails": purged_pending_emails,
+            "radar_purged_email_deliveries": purged_email_deliveries,
+            "radar_purged_email_suppressions": purged_email_suppressions,
             "radar_missing_projections": missing_projections,
             "radar_expired_profiles_remaining": expired_profiles,
+            "radar_expired_pending_emails_remaining": expired_pending_emails,
+            "radar_expired_email_deliveries_remaining": expired_email_deliveries,
+            "radar_expired_email_suppressions_remaining": expired_email_suppressions,
         }
     finally:
         connection.close()
@@ -527,7 +556,14 @@ def checked_radar_housekeeping():
         evidence = run_radar_housekeeping()
     except Exception:
         raise RadarHousekeepingFailed("radar_housekeeping_failed") from None
-    if evidence.get("radar_missing_projections", 0) > 0 or evidence.get("radar_expired_profiles_remaining", 0) > 0:
+    incomplete = (
+        "radar_missing_projections",
+        "radar_expired_profiles_remaining",
+        "radar_expired_pending_emails_remaining",
+        "radar_expired_email_deliveries_remaining",
+        "radar_expired_email_suppressions_remaining",
+    )
+    if any(evidence.get(key, 0) > 0 for key in incomplete):
         raise RadarHousekeepingFailed("radar_housekeeping_incomplete", evidence)
     return evidence
 

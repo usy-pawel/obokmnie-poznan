@@ -10,6 +10,7 @@ import {
 } from './lib/case-context.mjs';
 import { readDataStatus, readHealth } from './lib/service-health.mjs';
 import { createPrivateMaintenancePreflightHandler } from './lib/maintenance-private-api.mjs';
+import { createMailjetSender, mailjetConfigurationStatus } from './lib/mailjet-client.mjs';
 import { createRadarSubscriptionsRouter } from './lib/radar-subscriptions.mjs';
 
 const app = express();
@@ -73,6 +74,10 @@ function selectedDateRange(value) {
 }
 
 app.disable('x-powered-by');
+app.use((_request, response, next) => {
+  response.set('Referrer-Policy', 'no-referrer');
+  next();
+});
 app.use(compression());
 app.use(express.static('public', { maxAge: '1h', etag: true }));
 
@@ -87,6 +92,10 @@ function sendPublicApp(response, statusCode, caseKey) {
     .type('html')
     .send(html);
 }
+
+app.get('/potwierdz-email', (_request, response) => {
+  response.set('Cache-Control', 'no-store').status(200).type('html').send(publicIndexHtml);
+});
 
 app.get('/sprawa/:caseKey', async (request, response, next) => {
   try {
@@ -124,7 +133,11 @@ app.get('/api/internal/maintenance/preflight', createPrivateMaintenancePreflight
 }));
 
 if (process.env.RADAR_SERVER_ENABLED === '1') {
-  app.use('/api/radar', createRadarSubscriptionsRouter({ database: pool }));
+  const mailjetStatus = mailjetConfigurationStatus(process.env);
+  const mailSender = mailjetStatus.configured && mailjetStatus.enabled
+    ? createMailjetSender({ environment: process.env })
+    : null;
+  app.use('/api/radar', createRadarSubscriptionsRouter({ database: pool, mailSender }));
 }
 
 app.get('/api/meta', async (request, response, next) => {
@@ -519,7 +532,10 @@ app.use((error, request, response, _next) => {
   if (error instanceof URIError && String(request.originalUrl || '').startsWith('/sprawa/')) {
     return sendPublicApp(response, 404, 'brak');
   }
-  console.error(error);
+  const safeCode = /^[A-Za-z0-9_]{1,40}$/.test(String(error?.code || ''))
+    ? String(error.code)
+    : 'internal_error';
+  console.error('request failed', { method: request.method, code: safeCode });
   response.status(500).json({ error: 'internal_error' });
 });
 

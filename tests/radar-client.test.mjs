@@ -5,7 +5,9 @@ import {
   cookieValue,
   createRadarClient,
   csrfFromCookies,
+  emailSubscriptionBody,
   isRetryableRadarError,
+  marketingPreferenceBody,
   monitorCreateBody,
   monitorIncludesParcel,
   monitorLabel,
@@ -69,6 +71,48 @@ test('mutations send exact JSON, same-origin credentials and CSRF', async () => 
   ]);
 });
 
+test('email subscription keeps service and optional marketing consent separate', async () => {
+  assert.deepEqual(emailSubscriptionBody('user@example.com'), {
+    version: 'radar_email_request_v1',
+    email: 'user@example.com',
+    service_consent: true,
+    service_consent_version: 'radar_alerts_service_pl_v1',
+    marketing_consent: false,
+    marketing_consent_version: 'radar_marketing_pl_v1',
+  });
+  assert.equal(emailSubscriptionBody('user@example.com', { marketingConsent: true }).marketing_consent, true);
+  assert.deepEqual(marketingPreferenceBody(false), {
+    version: 'radar_email_request_v1', marketing_consent: false,
+    marketing_consent_version: 'radar_marketing_pl_v1',
+  });
+});
+
+test('email API methods use the existing session and confirmation is token-only', async () => {
+  const calls = [];
+  const client = createRadarClient({
+    cookieHeader: () => 'radar_csrf=csrf-token',
+    fetchFn: async (path, options) => {
+      calls.push({ path, options });
+      return jsonResponse(200, { version: 'radar_email_status_v1', state: 'active' });
+    },
+  });
+  await client.requestEmail(emailSubscriptionBody('user@example.com'));
+  await client.updateMarketingConsent(marketingPreferenceBody(false));
+  await client.confirmEmail('x'.repeat(43));
+  await client.deleteEmail();
+  assert.deepEqual(calls.map(({ path }) => path), [
+    '/api/radar/email', '/api/radar/email/marketing', '/api/radar/email/confirm', '/api/radar/email',
+  ]);
+  assert.equal(calls[0].options.headers['X-Radar-CSRF'], 'csrf-token');
+  assert.equal(calls[1].options.method, 'PUT');
+  assert.equal(calls[1].options.headers['X-Radar-CSRF'], 'csrf-token');
+  assert.equal(calls[2].options.headers['X-Radar-CSRF'], undefined);
+  assert.deepEqual(JSON.parse(calls[2].options.body), {
+    version: 'radar_email_confirm_v1', token: 'x'.repeat(43),
+  });
+  assert.equal(calls[3].options.method, 'DELETE');
+});
+
 test('local migration request includes its observed timestamp and stable key', () => {
   assert.deepEqual(monitorCreateBody({ kind: 'parcel', parcel_id: 'A' }, {
     idempotencyKey: 'c7ee54c1-7610-4b3a-bb18-e0f60948a183',
@@ -110,6 +154,7 @@ test('monitor presentation supports parcel, set and radius without private label
 test('server error codes map to bounded Polish messages', () => {
   assert.match(radarErrorMessage(new RadarApiError(422, 'monitor_limit_reached')), /limit/);
   assert.match(radarErrorMessage(new RadarApiError(403, 'csrf_invalid')), /Odśwież/);
+  assert.match(radarErrorMessage(new RadarApiError(400, 'confirmation_invalid')), /wygasł/);
   assert.doesNotMatch(radarErrorMessage(new Error('secret database detail')), /secret|database/);
   assert.equal(isRetryableRadarError(new TypeError('network')), true);
   assert.equal(isRetryableRadarError(new RadarApiError(503, 'database_unavailable')), true);

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="theme-color" content="#f5f1e9" />
+    <meta name="referrer" content="no-referrer" />
     <meta
       name="description"
       content="Zobacz potwierdzone sprawy budowlane z całej Polski na interaktywnej mapie działek."
@@ -15,7 +16,7 @@
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
     <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css"
       integrity="sha384-uTttxo/aOKbdE5RlD/SPzSDoDmNvGlUYPjONi2MN/b7c9HPSvW07OIuyP7uL6jxK" crossorigin="anonymous" />
-    <link rel="stylesheet" href="/styles.css?v=polska-6" />
+    <link rel="stylesheet" href="/styles.css?v=polska-7" />
   </head>
   <body>
     <div class="page-shell">
@@ -97,9 +98,42 @@
           </div>
           <p class="radar-mode" id="radar-mode">Sprawdzam bezpieczne przechowywanie monitoringu…</p>
           <div class="radar-watches" id="radar-watches"></div>
+          <section class="radar-email" id="radar-email" aria-labelledby="radar-email-heading" hidden>
+            <h3 id="radar-email-heading">Powiadomienia e-mail</h3>
+            <p id="radar-email-status">Dodaj adres, aby dostawać informacje o zmianach od razu po ich wykryciu.</p>
+            <form id="radar-email-form">
+              <label for="radar-email-input">Adres e-mail</label>
+              <input id="radar-email-input" name="email" type="email" autocomplete="email" maxlength="254" required />
+              <label class="radar-consent">
+                <input id="radar-service-consent" type="checkbox" required />
+                <span>Chcę otrzymywać e-maile o zmianach w monitorowanych miejscach. Wiem, że mogę zrezygnować w każdej chwili.</span>
+              </label>
+              <label class="radar-consent">
+                <input id="radar-marketing-consent" type="checkbox" />
+                <span>Chcę też otrzymywać informacje o nowościach i ofertach RadarZmian.pl (opcjonalnie).</span>
+              </label>
+              <button type="submit">Wyślij link potwierdzający</button>
+            </form>
+            <form id="radar-marketing-form" hidden>
+              <label class="radar-consent">
+                <input id="radar-active-marketing-consent" type="checkbox" />
+                <span>Chcę też otrzymywać informacje o nowościach i ofertach RadarZmian.pl (opcjonalnie).</span>
+              </label>
+              <button type="submit">Zapisz preferencję marketingową</button>
+            </form>
+            <button class="radar-email-remove" id="radar-email-remove" type="button" hidden>Wyłącz powiadomienia e-mail</button>
+            <p class="radar-email-notice" id="radar-email-notice" role="status"></p>
+          </section>
           <div class="radar-events" id="radar-events"></div>
           <button class="radar-more" id="radar-more" type="button" hidden>Wczytaj kolejne zmiany</button>
           <p class="radar-state" id="radar-state" role="status"></p>
+        </section>
+
+        <section class="email-confirmation" id="email-confirmation-panel" aria-labelledby="email-confirmation-heading" hidden>
+          <p class="eyebrow">Radar zmian</p>
+          <h2 id="email-confirmation-heading">Potwierdź adres e-mail</h2>
+          <p id="email-confirmation-status">Kliknij przycisk, aby włączyć powiadomienia o monitorowanych miejscach.</p>
+          <button id="email-confirmation-submit" type="button">Potwierdź adres e-mail</button>
         </section>
 
         <section class="explorer" aria-label="Mapa i lista spraw">
@@ -219,6 +253,6 @@
 
     <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"
       integrity="sha384-5+cfbwT0iiub6VsQAdn6yz16nr6sDiQoHx6tm4O8OVYXHYOxcffFmCJBL0dgdvGp" crossorigin="anonymous"></script>
-    <script type="module" src="/app.js?v=polska-19"></script>
+    <script type="module" src="/app.js?v=polska-20"></script>
   </body>
 </html>

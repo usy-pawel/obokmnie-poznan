@@ -50,6 +50,7 @@ try {
   await run('scripts/migrate.mjs', environment);
   await run('scripts/test-radar-postgis.mjs', environment);
   await run('scripts/test-radar-api.mjs', environment);
+  await run('scripts/test-radar-email-api.mjs', environment);
   console.log(JSON.stringify({ ok: true, suite: 'radar_postgis_release' }));
 } finally {
   await admin.query(`

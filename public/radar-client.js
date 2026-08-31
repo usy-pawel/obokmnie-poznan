@@ -1,5 +1,9 @@
 export const RADAR_PROFILE_VERSION = 'radar_profile_v1';
 export const RADAR_MONITOR_CREATE_VERSION = 'radar_monitor_create_v1';
+export const RADAR_EMAIL_REQUEST_VERSION = 'radar_email_request_v1';
+export const RADAR_EMAIL_CONFIRM_VERSION = 'radar_email_confirm_v1';
+export const RADAR_SERVICE_CONSENT_VERSION = 'radar_alerts_service_pl_v1';
+export const RADAR_MARKETING_CONSENT_VERSION = 'radar_marketing_pl_v1';
 
 export class RadarApiError extends Error {
   constructor(status, code) {
@@ -62,6 +66,25 @@ export function monitorCreateBody(target, {
   return body;
 }
 
+export function emailSubscriptionBody(email, { marketingConsent = false } = {}) {
+  return {
+    version: RADAR_EMAIL_REQUEST_VERSION,
+    email,
+    service_consent: true,
+    service_consent_version: RADAR_SERVICE_CONSENT_VERSION,
+    marketing_consent: marketingConsent,
+    marketing_consent_version: RADAR_MARKETING_CONSENT_VERSION,
+  };
+}
+
+export function marketingPreferenceBody(marketingConsent) {
+  return {
+    version: RADAR_EMAIL_REQUEST_VERSION,
+    marketing_consent: marketingConsent,
+    marketing_consent_version: RADAR_MARKETING_CONSENT_VERSION,
+  };
+}
+
 export function reusablePendingCreate(pending, target, idempotencyKey) {
   const key = monitorTargetKey(target);
   return pending.find((body) => monitorTargetKey(body.target) === key)
@@ -80,6 +103,9 @@ export function radarErrorMessage(error) {
   if (code === 'parcel_not_found') return 'Ta działka nie jest już dostępna w aktualnych danych.';
   if (code === 'rate_limited' || code === 'capacity_limited') return 'Radar ma teraz zbyt wiele żądań. Spróbuj ponownie później.';
   if (code === 'monitor_not_found') return 'Ten monitoring nie istnieje lub został już usunięty.';
+  if (code === 'invalid_email_request') return 'Sprawdź adres e-mail i wymagane zgody.';
+  if (code === 'email_service_unavailable') return 'Powiadomienia e-mail są chwilowo niedostępne. Spróbuj ponownie później.';
+  if (code === 'confirmation_invalid') return 'Ten link potwierdzający wygasł albo został już użyty.';
   return 'Nie udało się wykonać operacji. Spróbuj ponownie.';
 }
 
@@ -135,5 +161,14 @@ export function createRadarClient({
     resumeMonitor: (id) => request(`/monitors/${id}/resume`, { method: 'POST', body: {}, csrf: true }),
     deleteMonitor: (id) => request(`/monitors/${id}`, { method: 'DELETE', body: {}, csrf: true }),
     readEvents: (afterMatchId = '0') => request(`/events?after_match_id=${encodeURIComponent(afterMatchId)}`),
+    getEmailStatus: () => request('/email'),
+    requestEmail: (body) => request('/email', { method: 'POST', body, csrf: true }),
+    updateMarketingConsent: (body) => request('/email/marketing', {
+      method: 'PUT', body, csrf: true,
+    }),
+    confirmEmail: (token) => request('/email/confirm', {
+      method: 'POST', body: { version: RADAR_EMAIL_CONFIRM_VERSION, token },
+    }),
+    deleteEmail: () => request('/email', { method: 'DELETE', body: {}, csrf: true }),
   };
 }

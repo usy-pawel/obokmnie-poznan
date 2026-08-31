@@ -168,6 +168,19 @@ npm run test:postgis
 Harness sam tworzy i usuwa losową bazę; skrypty wykonujące `TRUNCATE` odmawiają pracy poza
 loopbackiem i bazą o prefiksie `radar_test_`.
 
+Powiadomienia e-mail korzystają z tego samego anonimowego profilu Radaru i z double opt-in.
+Uruchomienie wysyłki wymaga kompletnej konfiguracji Mailjet oraz osobnej bramki
+`MAILJET_SEND_ENABLED=true`. Odciski adresów wymagają niezależnego, losowego
+`RADAR_EMAIL_HASH_KEY` w formacie base64url dla 32 bajtów, a link potwierdzający powstaje na bazie
+`RADAR_PUBLIC_ORIGIN` (produkcyjnie `https://www.radarzmian.pl`). Bez włączonej bramki formularz
+zapisu nie jest pokazywany nowym użytkownikom i żadna wiadomość nie jest wysyłana.
+
+Token potwierdzający jest jednorazowy i ważny 24 godziny. Niepotwierdzony adres jest usuwany po
+7 dniach. Aktywny adres podlega retencji profilu: 90 dni bez aktywności, maksymalnie 365 dni.
+Techniczne receipty dostawcy nie zawierają adresu, tematu ani treści i są usuwane po 30 dniach;
+po usunięciu adresu zostaje jedynie 30-dniowy kluczowany odcisk techniczny. Zgoda marketingowa
+jest osobna, opcjonalna, domyślnie wyłączona i może być wycofana bez wyłączania alertów.
+
 Kolejność rolloutu: migracja 011 → kod z API wyłączonym → `verify:radar-import` i smoke → osobna
 decyzja o `RADAR_SERVER_ENABLED=1`. Po aktywacji nie wolno cofać samego importera do wersji bez
 projekcji. Jeżeli rollback aplikacji jest konieczny, API pozostaje wyłączone, housekeeping odzyskuje

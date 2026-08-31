@@ -1,6 +1,8 @@
 import {
   createRadarClient,
+  emailSubscriptionBody,
   isRetryableRadarError,
+  marketingPreferenceBody,
   monitorCreateBody,
   monitorIncludesParcel,
   monitorLabel,
@@ -8,7 +10,7 @@ import {
   radarErrorMessage,
   removeMonitorBackup,
   reusablePendingCreate,
-} from './radar-client.js?v=radar-1';
+} from './radar-client.js?v=radar-2';
 
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
@@ -60,6 +62,9 @@ const state = {
   radarCursor: '0',
   radarHasMore: false,
   radarBusy: new Set(),
+  radarEmailStatus: { state: 'none' },
+  radarEmailBusy: false,
+  radarEmailNotice: '',
 };
 
 const ui = {
@@ -93,6 +98,19 @@ const ui = {
   radarEvents: document.querySelector('#radar-events'),
   radarMore: document.querySelector('#radar-more'),
   radarState: document.querySelector('#radar-state'),
+  radarEmail: document.querySelector('#radar-email'),
+  radarEmailStatus: document.querySelector('#radar-email-status'),
+  radarEmailForm: document.querySelector('#radar-email-form'),
+  radarEmailInput: document.querySelector('#radar-email-input'),
+  radarServiceConsent: document.querySelector('#radar-service-consent'),
+  radarMarketingConsent: document.querySelector('#radar-marketing-consent'),
+  radarMarketingForm: document.querySelector('#radar-marketing-form'),
+  radarActiveMarketingConsent: document.querySelector('#radar-active-marketing-consent'),
+  radarEmailRemove: document.querySelector('#radar-email-remove'),
+  radarEmailNotice: document.querySelector('#radar-email-notice'),
+  emailConfirmationPanel: document.querySelector('#email-confirmation-panel'),
+  emailConfirmationStatus: document.querySelector('#email-confirmation-status'),
+  emailConfirmationSubmit: document.querySelector('#email-confirmation-submit'),
   canonical: document.querySelector('#canonical-link'),
   robots: document.querySelector('#robots-meta'),
   emptyMessage: document.querySelector('#empty-state p'),
@@ -416,6 +434,24 @@ function renderRadar() {
   uniqueEvents.forEach(appendRadarEvent);
   ui.radarMore.hidden = state.radarMode !== 'server' || !state.radarHasMore;
   ui.radarMore.disabled = state.radarLoading;
+  const emailState = state.radarEmailStatus?.state || 'none';
+  ui.radarEmail.hidden = state.radarMode !== 'server' || !state.radarAuthenticated
+    || (emailState === 'none' && state.radarEmailStatus?.confirmation_available === false);
+  ui.radarEmailForm.hidden = emailState === 'active';
+  ui.radarMarketingForm.hidden = emailState !== 'active';
+  ui.radarEmailRemove.hidden = emailState === 'none';
+  ui.radarEmailForm.querySelector('button[type="submit"]').disabled = state.radarEmailBusy;
+  ui.radarEmailRemove.disabled = state.radarEmailBusy;
+  ui.radarMarketingForm.querySelector('button').disabled = state.radarEmailBusy;
+  ui.radarActiveMarketingConsent.checked = state.radarEmailStatus?.marketing_consent === true;
+  if (emailState === 'active') {
+    ui.radarEmailStatus.textContent = `Powiadomienia są aktywne dla ${state.radarEmailStatus.masked_email || 'potwierdzonego adresu'}.`;
+  } else if (emailState === 'pending') {
+    ui.radarEmailStatus.textContent = `Czekamy na potwierdzenie adresu ${state.radarEmailStatus.masked_email || ''}. Możesz wysłać link ponownie albo zmienić adres.`;
+  } else {
+    ui.radarEmailStatus.textContent = 'Dodaj adres, aby dostawać informacje o zmianach od razu po ich wykryciu.';
+  }
+  ui.radarEmailNotice.textContent = state.radarEmailNotice;
 
   const lastSeen = new Date(localStorage.getItem(RADAR_SEEN_KEY) || 0);
   const unseen = uniqueEvents.filter((event) => new Date(event.occurred_at) > lastSeen).length;
@@ -481,15 +517,17 @@ async function loadServerRadar() {
   state.radarError = false;
   renderRadar();
   try {
-    const [list, feed] = await Promise.all([
+    const [list, feed, emailStatus] = await Promise.all([
       radarClient.listMonitors(),
       radarClient.readEvents(state.radarCursor),
+      radarClient.getEmailStatus(),
     ]);
     state.radarMonitors = list.monitors || [];
     state.radarEvents = [...new Map([...state.radarEvents, ...(feed.events || [])]
       .map((event) => [event.match_id, event])).values()];
     state.radarCursor = feed.next_after_match_id || state.radarCursor;
     state.radarHasMore = feed.has_more === true;
+    state.radarEmailStatus = emailStatus;
   } catch (error) {
     state.radarError = true;
     state.radarNotice = handleExpiredRadarProfile(error)
@@ -506,6 +544,83 @@ async function ensureRadarProfile() {
   await radarClient.createProfile();
   state.radarAuthenticated = true;
   return true;
+}
+
+async function submitRadarEmail() {
+  if (state.radarEmailBusy || !ui.radarEmailForm.reportValidity()) return;
+  state.radarEmailBusy = true;
+  state.radarEmailNotice = 'Wysyłam link potwierdzający…';
+  renderRadar();
+  try {
+    await radarClient.requestEmail(emailSubscriptionBody(ui.radarEmailInput.value, {
+      marketingConsent: ui.radarMarketingConsent.checked,
+    }));
+    state.radarEmailStatus = await radarClient.getEmailStatus();
+    state.radarEmailNotice = 'Jeśli adres może otrzymać wiadomość, link potwierdzający został wysłany. Link jest ważny przez 24 godziny.';
+    ui.radarEmailInput.value = '';
+    ui.radarServiceConsent.checked = false;
+    ui.radarMarketingConsent.checked = false;
+  } catch (error) {
+    state.radarEmailNotice = radarErrorMessage(error);
+  } finally {
+    state.radarEmailBusy = false;
+    renderRadar();
+  }
+}
+
+async function removeRadarEmail() {
+  if (state.radarEmailBusy) return;
+  state.radarEmailBusy = true;
+  state.radarEmailNotice = 'Wyłączam powiadomienia…';
+  renderRadar();
+  try {
+    await radarClient.deleteEmail();
+    state.radarEmailStatus = { state: 'none' };
+    state.radarEmailNotice = 'Powiadomienia e-mail zostały wyłączone, a adres usunięty.';
+  } catch (error) {
+    state.radarEmailNotice = radarErrorMessage(error);
+  } finally {
+    state.radarEmailBusy = false;
+    renderRadar();
+  }
+}
+
+async function updateRadarMarketingConsent() {
+  if (state.radarEmailBusy) return;
+  state.radarEmailBusy = true;
+  state.radarEmailNotice = 'Zapisuję preferencję…';
+  const marketingConsent = ui.radarActiveMarketingConsent.checked;
+  renderRadar();
+  try {
+    state.radarEmailStatus = await radarClient.updateMarketingConsent(
+      marketingPreferenceBody(marketingConsent),
+    );
+    state.radarEmailNotice = 'Preferencja marketingowa została zapisana.';
+  } catch (error) {
+    state.radarEmailNotice = radarErrorMessage(error);
+  } finally {
+    state.radarEmailBusy = false;
+    renderRadar();
+  }
+}
+
+function initializeEmailConfirmation() {
+  if (window.location.pathname !== '/potwierdz-email') return;
+  ui.emailConfirmationPanel.hidden = false;
+  const token = new URLSearchParams(window.location.hash.slice(1)).get('token') || '';
+  ui.emailConfirmationSubmit.addEventListener('click', async () => {
+    ui.emailConfirmationSubmit.disabled = true;
+    ui.emailConfirmationStatus.textContent = 'Potwierdzam adres…';
+    try {
+      await radarClient.confirmEmail(token);
+      ui.emailConfirmationStatus.textContent = 'Adres został potwierdzony. Powiadomienia o monitorowanych miejscach są aktywne.';
+      ui.emailConfirmationSubmit.hidden = true;
+      window.history.replaceState({}, '', '/potwierdz-email');
+    } catch (error) {
+      ui.emailConfirmationStatus.textContent = radarErrorMessage(error);
+      ui.emailConfirmationSubmit.disabled = false;
+    }
+  });
 }
 
 async function migrateBrowserWatch(watch) {
@@ -1569,6 +1684,15 @@ ui.radarMore.addEventListener('click', async () => {
   if (ui.radarMore.hidden) ui.radarClose.focus();
   else ui.radarMore.focus();
 });
+ui.radarEmailForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void submitRadarEmail();
+});
+ui.radarEmailRemove.addEventListener('click', () => { void removeRadarEmail(); });
+ui.radarMarketingForm.addEventListener('submit', (event) => {
+  event.preventDefault();
+  void updateRadarMarketingConsent();
+});
 
 window.addEventListener('popstate', () => {
   const key = caseKeyFromPath();
@@ -1585,6 +1709,7 @@ window.addEventListener('popstate', () => {
   });
 });
 
+initializeEmailConfirmation();
 initializeMap();
 loadMeta().catch(() => { ui.heroCount.textContent = '—'; });
 void initializeRadar();

@@ -88,10 +88,13 @@ try {
   const migration011 = await readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8');
   await upgrade.query('BEGIN');
   await upgrade.query(migration011);
+  const interruptedConnectionErrors = [];
+  upgrade.on('error', (error) => interruptedConnectionErrors.push(error));
   const interruptedBackend = await upgrade.query('SELECT pg_backend_pid() AS pid');
   await admin.query('SELECT pg_terminate_backend($1)', [interruptedBackend.rows[0].pid]);
   await assert.rejects(upgrade.query('COMMIT'));
   await upgrade.end().catch(() => {});
+  assert.equal(interruptedConnectionErrors.every((error) => error.code === '57P01'), true);
   upgrade = new pg.Client(config(upgradeUrl, 'radar_upgrade_test_reconnected'));
   await upgrade.connect();
   const interruptedDeployment = await upgrade.query(`
@@ -131,6 +134,18 @@ try {
   const withdrawnPublication = await upgrade.query('SELECT published,ever_published FROM cases WHERE id=$1', [caseRow.rows[0].id]);
   assert.deepEqual(withdrawnPublication.rows[0], { published: false, ever_published: true });
 
+  const migration013 = await readFile(new URL('../migrations/013_radar_email_double_opt_in.sql', import.meta.url), 'utf8');
+  await upgrade.query('BEGIN');
+  try {
+    await upgrade.query("SET LOCAL statement_timeout='2s'");
+    await upgrade.query(migration013);
+    await upgrade.query("INSERT INTO schema_migrations(name) VALUES('013_radar_email_double_opt_in.sql')");
+    await upgrade.query('COMMIT');
+  } catch (error) {
+    await upgrade.query('ROLLBACK');
+    throw error;
+  }
+
   const oldEvent = await upgrade.query('SELECT match_parcel_ids FROM case_events ORDER BY id LIMIT 1');
   assert.equal(oldEvent.rows[0].match_parcel_ids, null);
   const baseline = await upgrade.query(`
@@ -146,6 +161,41 @@ try {
     INSERT INTO radar_profiles(id,token_hash,csrf_hash,inactive_expires_at,absolute_expires_at)
     VALUES($1,$2,$3,clock_timestamp()+interval '90 days',clock_timestamp()+interval '365 days')
   `, [legacyProfile, randomBytes(32), randomBytes(32)]);
+  await upgrade.query(`
+    INSERT INTO radar_email_subscriptions(
+      profile_id,email,email_fingerprint,state,confirmation_token_hash,
+      confirmation_expires_at,unconfirmed_delete_at,resend_available_at,
+      service_consent_version,service_consent_text,service_consented_at,
+      marketing_consent,marketing_consent_version,marketing_consent_text
+    ) VALUES(
+      $1,'upgrade@example.com',$2,'pending',$3,
+      clock_timestamp()-interval '2 days',clock_timestamp()-interval '1 day',clock_timestamp(),
+      'service-v1','Service consent',clock_timestamp(),false,'marketing-v1','Marketing consent'
+    )
+  `, [legacyProfile, randomBytes(32), randomBytes(32)]);
+  await upgrade.query(`
+    INSERT INTO radar_email_deliveries(
+      id,profile_id,custom_id,kind,provider_message_id,provider_message_uuid,created_at,expires_at
+    ) VALUES($1,$2,'upgrade:delivery','confirmation','provider-id','provider-uuid',
+      clock_timestamp()-interval '31 days',clock_timestamp()-interval '1 day')
+  `, [randomUUID(), legacyProfile]);
+  const purgedEmail = await upgrade.query('SELECT * FROM radar_purge_email_data(1000)');
+  assert.deepEqual(purgedEmail.rows[0], {
+    pending_subscriptions: 1, deliveries: 1, suppressions: 0,
+  });
+  const suppression = await upgrade.query(`
+    SELECT count(*)::integer AS count FROM radar_email_suppressions
+    WHERE email_fingerprint IS NOT NULL AND expires_at>clock_timestamp()
+  `);
+  assert.equal(suppression.rows[0].count, 1);
+  await upgrade.query(`
+    UPDATE radar_email_suppressions SET
+      suppressed_at=clock_timestamp()-interval '31 days',
+      expires_at=clock_timestamp()-interval '1 day'
+  `);
+  const purgedSuppression = await upgrade.query('SELECT * FROM radar_purge_email_data(1000)');
+  assert.equal(purgedSuppression.rows[0].suppressions, 1);
+  assert.equal((await upgrade.query("SELECT radar_charge_global_rate('email_confirmation',10) AS charged")).rows[0].charged, 1);
   await upgrade.query(`
     INSERT INTO radar_watches(id,profile_id,client_key,request_hash,kind,starts_after_import_id)
     VALUES($1,$2,$3,$4,'parcel',$5)
@@ -204,7 +254,7 @@ try {
   const version = await upgrade.query('SELECT PostGIS_Version() AS version');
   console.log(JSON.stringify({
     ok: true,
-    upgrade: '010_to_012',
+    upgrade: '010_to_013',
     interrupted_deployment_rollback: true,
     postgis: version.rows[0].version,
   }));

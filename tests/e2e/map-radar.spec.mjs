@@ -130,12 +130,16 @@ async function installDeterministicRoutes(page, {
   contextDelayMs = 0,
   mapDelayMs = 20,
   realMap = false,
+  radarEmail = false,
 } = {}) {
   const origin = appOrigin();
   const maplibreScriptUrl = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js';
   const maplibreCssUrl = 'https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css';
   const mapStyleUrl = 'https://tiles.openfreemap.org/styles/positron';
-  const diagnostics = { mapRequests: [], pageErrors: [], unexpectedRequests: [] };
+  const diagnostics = {
+    mapRequests: [], pageErrors: [], unexpectedRequests: [], emailRequests: [],
+    emailState: 'none', emailMarketing: false,
+  };
   page.on('pageerror', (error) => diagnostics.pageErrors.push(error.message));
 
   await page.route('**/*', async (route) => {
@@ -161,6 +165,7 @@ async function installDeterministicRoutes(page, {
   });
   await page.route(`${origin}/`, appShell);
   await page.route(`${origin}/sprawa/**`, appShell);
+  await page.route(`${origin}/potwierdz-email**`, appShell);
   await page.route(maplibreScriptUrl, (route) => route.fulfill({
     status: 200,
     contentType: 'application/javascript; charset=utf-8',
@@ -189,7 +194,58 @@ async function installDeterministicRoutes(page, {
       return;
     }
     if (url.pathname === '/api/radar/profile') {
+      if (radarEmail) {
+        await fulfillJson(route, {
+          version: 'radar_profile_v1', created_at: '2026-08-31T08:00:00Z',
+          inactive_expires_at: '2026-11-29T08:00:00Z', absolute_expires_at: '2027-08-31T08:00:00Z',
+          limits: { monitors: 20, parcel_memberships: 100, radius_monitors: 3 },
+        });
+        return;
+      }
       await fulfillJson(route, { error: 'router_disabled' }, { status: 404 });
+      return;
+    }
+    if (radarEmail && url.pathname === '/api/radar/monitors') {
+      await fulfillJson(route, { version: 'radar_monitor_list_v1', monitors: [] });
+      return;
+    }
+    if (radarEmail && url.pathname === '/api/radar/events') {
+      await fulfillJson(route, {
+        version: 'radar_event_feed_v1', events: [], next_after_match_id: '0', has_more: false,
+        checked_at: '2026-08-31T08:00:00Z',
+      });
+      return;
+    }
+    if (radarEmail && url.pathname === '/api/radar/email/confirm') {
+      diagnostics.emailState = 'active';
+      diagnostics.emailRequests.push(JSON.parse(route.request().postData() || '{}'));
+      await fulfillJson(route, { version: 'radar_email_status_v1', state: 'active' });
+      return;
+    }
+    if (radarEmail && url.pathname === '/api/radar/email/marketing') {
+      const body = JSON.parse(route.request().postData() || '{}');
+      diagnostics.emailRequests.push(body);
+      diagnostics.emailMarketing = body.marketing_consent === true;
+      await fulfillJson(route, {
+        version: 'radar_email_status_v1', state: 'active', masked_email: 'u***@example.com',
+        delivery_mode: 'immediate', marketing_consent: diagnostics.emailMarketing,
+      });
+      return;
+    }
+    if (radarEmail && url.pathname === '/api/radar/email') {
+      if (route.request().method() === 'POST') {
+        const body = JSON.parse(route.request().postData() || '{}');
+        diagnostics.emailRequests.push(body);
+        diagnostics.emailState = 'pending';
+      } else if (route.request().method() === 'DELETE') diagnostics.emailState = 'none';
+      await fulfillJson(route, diagnostics.emailState === 'none'
+        ? { version: 'radar_email_status_v1', state: 'none' }
+        : {
+          version: 'radar_email_status_v1', state: diagnostics.emailState,
+          masked_email: 'u***@example.com', delivery_mode: 'immediate',
+          marketing_consent: diagnostics.emailMarketing,
+          ...(diagnostics.emailState === 'pending' ? { confirmation_expires_at: '2026-09-01T08:00:00Z' } : {}),
+        }, { status: route.request().method() === 'POST' ? 202 : 200 });
       return;
     }
     if (url.pathname === '/api/map') {
@@ -343,6 +399,43 @@ test('hierarchia mapy, wybór działki i historia pozostają spójne', async ({ 
   await page.locator('.map-card').evaluate((element) => { element.hidden = false; });
   await expect.poll(() => page.evaluate(() => window.__mapTest.calls.resize)).toBeGreaterThan(resizeWhileHidden);
   await expect(page.locator('#map canvas[data-map-ready="true"]')).toBeVisible();
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
+test('powiadomienia e-mail wymagają osobnej zgody i ręcznego double opt-in', async ({ page }) => {
+  const diagnostics = await installDeterministicRoutes(page, { radarEmail: true });
+  await page.context().addCookies([{
+    name: 'radar_csrf', value: 'csrf-token', domain: '127.0.0.1', path: '/', sameSite: 'Strict',
+  }]);
+  await page.goto(`${appOrigin()}/`);
+  await page.getByRole('button', { name: /Radar/ }).click();
+  await expect(page.getByRole('heading', { name: 'Powiadomienia e-mail' })).toBeVisible();
+  await page.locator('#radar-email-input').fill('user@example.com');
+  await page.locator('#radar-service-consent').check();
+  await page.getByRole('button', { name: 'Wyślij link potwierdzający' }).click();
+  await expect(page.locator('#radar-email-status')).toContainText('Czekamy na potwierdzenie');
+  expect(diagnostics.emailRequests).toHaveLength(1);
+  expect(diagnostics.emailRequests[0]).toMatchObject({
+    service_consent: true, marketing_consent: false,
+    service_consent_version: 'radar_alerts_service_pl_v1',
+    marketing_consent_version: 'radar_marketing_pl_v1',
+  });
+
+  await page.goto(`${appOrigin()}/potwierdz-email#token=${'x'.repeat(43)}`);
+  await expect(page.getByRole('heading', { name: 'Potwierdź adres e-mail' })).toBeVisible();
+  await page.getByRole('button', { name: 'Potwierdź adres e-mail' }).click();
+  await expect(page.locator('#email-confirmation-status')).toContainText('Adres został potwierdzony');
+  expect(new URL(page.url()).hash).toBe('');
+  expect(diagnostics.emailRequests[1]).toEqual({
+    version: 'radar_email_confirm_v1', token: 'x'.repeat(43),
+  });
+  await page.goto(`${appOrigin()}/`);
+  await page.getByRole('button', { name: /Radar/ }).click();
+  await page.locator('#radar-active-marketing-consent').check();
+  await page.getByRole('button', { name: 'Zapisz preferencję marketingową' }).click();
+  await expect(page.locator('#radar-email-notice')).toContainText('Preferencja marketingowa została zapisana');
+  expect(diagnostics.emailRequests[2]).toMatchObject({ marketing_consent: true });
   expect(diagnostics.pageErrors).toEqual([]);
   expect(diagnostics.unexpectedRequests).toEqual([]);
 });
