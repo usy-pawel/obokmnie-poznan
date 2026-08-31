@@ -8,6 +8,8 @@
       name="description"
       content="Zobacz potwierdzone sprawy budowlane z całej Polski na interaktywnej mapie działek."
     />
+    <meta id="robots-meta" name="robots" content="index,follow" />
+    <link id="canonical-link" rel="canonical" href="/" />
     <title>Co budują w Polsce?</title>
     <link rel="preconnect" href="https://unpkg.com" />
     <link rel="preconnect" href="https://tiles.openfreemap.org" />
@@ -131,7 +133,7 @@
             <p class="list-note" id="list-note"></p>
             <div class="cases-list" id="cases-list" aria-live="polite"></div>
             <button class="load-more" id="load-more" type="button" hidden>Pokaż kolejne sprawy</button>
-            <div class="empty-state" id="empty-state" hidden>
+            <div class="empty-state" id="empty-state" role="status" aria-live="polite" hidden>
               <p>Brak spraw dla wybranych kryteriów.</p>
             </div>
           </aside>
@@ -204,6 +206,10 @@
           <button class="aerial-action" type="button" data-case-control="aerial">
             <span aria-hidden="true">◫</span> Pokaż działkę na zdjęciu lotniczym
           </button>
+          <button class="share-action" type="button" data-case-control="share" disabled>
+            <span aria-hidden="true">↗</span> Udostępnij sprawę
+          </button>
+          <p class="share-state" role="status" aria-live="polite"></p>
           <a class="source-link" data-case-control="source" href="https://wyszukiwarka.gunb.gov.pl/" target="_blank" rel="noreferrer">
             Otwórz wyszukiwarkę GUNB <span aria-hidden="true">↗</span>
           </a>

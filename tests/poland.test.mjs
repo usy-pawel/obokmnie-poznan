@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, serverRadarMigration, radarSubscriptions, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, serverRadarMigration, publicationHistoryMigration, radarSubscriptions, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../lib/service-health.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
@@ -12,6 +12,7 @@ const [server, serviceHealth, migration, integrityMigration, cityIndexMigration,
   readFile(new URL('../migrations/007_history_range_indexes.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/009_change_radar.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/012_case_publication_history.sql', import.meta.url), 'utf8'),
   readFile(new URL('../lib/radar-subscriptions.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
@@ -46,6 +47,8 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(serverRadarMigration, /radar_recover_missing_projections/);
   assert.match(serverRadarMigration, /radar_charge_global_rate/);
   assert.match(serverRadarMigration, /pg_advisory_xact_lock/);
+  assert.match(publicationHistoryMigration, /ever_published/);
+  assert.match(publicationHistoryMigration, /preserve_case_publication_history/);
   assert.match(importer, /OBOKMNIE_PERIOD_START/);
   assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
   assert.match(importer, /Oczekiwano 18 archiwów GUNB/);
@@ -56,8 +59,8 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   );
 });
 
-test('API exposes health, private maintenance, overview, search, radar, detail and lazy context routes', () => {
-  for (const route of ['/health', '/api/data-status', '/api/internal/maintenance/preflight', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/radar', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
+test('API exposes health, private maintenance, public case, overview, search, radar, detail and lazy context routes', () => {
+  for (const route of ['/health', '/sprawa/:caseKey', '/api/data-status', '/api/internal/maintenance/preflight', '/api/meta', '/api/map', '/api/search', '/api/suggestions', '/api/radar', '/api/cases/:caseKey', '/api/cases/:caseKey/context']) {
     assert.ok(server.includes(`'${route}'`), `missing ${route}`);
   }
   assert.match(server, /ST_MakeEnvelope/);
@@ -78,6 +81,8 @@ test('API exposes health, private maintenance, overview, search, radar, detail a
   assert.match(server, /contextInFlight/);
   assert.match(server, /OPENAI_API_KEY/);
   assert.match(server, /createRadarSubscriptionsRouter/);
+  assert.match(server, /case_withdrawn/);
+  assert.match(server, /ever_published \? 410 : 404/);
   assert.match(server, /RADAR_SERVER_ENABLED === '1'/);
   assert.match(radarSubscriptions, /__Host-radar_profile/);
   assert.match(radarSubscriptions, /__Host-radar_csrf/);
@@ -116,6 +121,15 @@ test('country frontend loads data by viewport and parcel detail on demand', () =
   assert.match(html, /id="radar-panel"/);
   assert.match(html, /class="radar-action"/);
   assert.match(frontend, /loadCaseContext/);
+  assert.match(frontend, /publicCasePath/);
+  assert.match(frontend, /navigator\.share/);
+  assert.match(frontend, /caseKeyFromPath/);
+  assert.match(html, /rel="canonical"/);
+  assert.match(html, /name="robots" content="index,follow"/);
+  assert.match(server, /content="noindex,follow"/);
+  assert.match(html, /data-case-control="share"/);
+  assert.match(html, /id="empty-state" role="status" aria-live="polite"/);
+  assert.match(server, /case sensitive routing/);
   assert.match(frontend, /Kontekst jest chwilowo niedostępny/);
   assert.doesNotMatch(frontend, /W promieniu 250 m|W promieniu 1 km/);
   assert.match(frontend, /loadSuggestions/);

@@ -34,6 +34,10 @@ const state = {
   selectedCaseKey: null,
   selectedDetail: null,
   selectedContext: null,
+  caseRequestController: null,
+  routeError: null,
+  routeInitialized: false,
+  shareNotice: '',
   listLimit: LIST_SIZE,
   baseLayer: 'streets',
   lastFittedQuery: '',
@@ -89,6 +93,9 @@ const ui = {
   radarEvents: document.querySelector('#radar-events'),
   radarMore: document.querySelector('#radar-more'),
   radarState: document.querySelector('#radar-state'),
+  canonical: document.querySelector('#canonical-link'),
+  robots: document.querySelector('#robots-meta'),
+  emptyMessage: document.querySelector('#empty-state p'),
 };
 
 const radarClient = createRadarClient();
@@ -806,6 +813,89 @@ function caseKey(properties) {
   return properties.case_key || properties.case_id;
 }
 
+function publicCasePath(key) {
+  return `/sprawa/${encodeURIComponent(key)}`;
+}
+
+function caseKeyFromPath(pathname = window.location.pathname) {
+  const match = /^\/sprawa\/([^/]+)\/?$/u.exec(pathname);
+  if (!match) return null;
+  try {
+    const key = decodeURIComponent(match[1]);
+    return key && !/[\u0000-\u001f]/u.test(key) ? key : null;
+  } catch {
+    return null;
+  }
+}
+
+function updateCanonical(key = null) {
+  ui.canonical.href = new URL(key ? publicCasePath(key) : '/', window.location.origin).href;
+  ui.robots.content = key ? 'noindex,follow' : 'index,follow';
+}
+
+function updateCaseRoute(key, { replace = false } = {}) {
+  const path = key ? publicCasePath(key) : '/';
+  const current = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+  if (current !== path) window.history[replace ? 'replaceState' : 'pushState']({}, '', path);
+  updateCanonical(key);
+}
+
+function featureFromDetail(detail) {
+  return {
+    type: 'Feature',
+    geometry: detail.location,
+    properties: {
+      ...detail,
+      cluster: false,
+      parcel_count: (detail.parcels || []).length,
+    },
+  };
+}
+
+function keepSelectedFeature(detail) {
+  if (!detail?.location) return;
+  const key = caseKey(detail);
+  if (!state.features.some((feature) => !feature.properties.cluster && caseKey(feature.properties) === key)) {
+    state.features.unshift(featureFromDetail(detail));
+    state.map?.getSource('cases')?.setData({ type: 'FeatureCollection', features: state.features });
+  }
+}
+
+function closeSelectedCase({ updateHistory = true } = {}) {
+  state.caseRequestController?.abort();
+  state.caseRequestController = null;
+  state.selectedCaseKey = null;
+  state.selectedDetail = null;
+  state.selectedContext = null;
+  state.routeError = null;
+  state.shareNotice = '';
+  state.map?.getSource('selected-parcels')?.setData(emptyCollection());
+  if (updateHistory) updateCaseRoute(null);
+  else updateCanonical();
+  renderCases();
+}
+
+async function shareCase(detail) {
+  const key = caseKey(detail);
+  const url = new URL(publicCasePath(key), window.location.origin).href;
+  const title = shortTitle(detail.description) || 'Sprawa budowlana';
+  try {
+    if (navigator.share) {
+      await navigator.share({ title, text: `${title} — RadarZmian`, url });
+      state.shareNotice = 'Udostępniono sprawę.';
+    } else if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(url);
+      state.shareNotice = 'Skopiowano bezpośredni adres sprawy.';
+    } else {
+      state.shareNotice = 'Bezpośredni adres sprawy jest widoczny w pasku przeglądarki.';
+    }
+  } catch (error) {
+    if (error?.name === 'AbortError') return;
+    state.shareNotice = 'Nie udało się udostępnić sprawy. Skopiuj adres z paska przeglądarki.';
+  }
+  renderCases();
+}
+
 function parcelFeatures(detail) {
   return (detail?.parcels || []).map((parcel) => ({
     type: 'Feature',
@@ -968,7 +1058,30 @@ function renderCases() {
   const cases = state.features.filter((feature) => !feature.properties.cluster);
   const clusters = state.features.filter((feature) => feature.properties.cluster);
   const provinces = clusters.filter((feature) => feature.properties.cluster_scope === 'voivodeship');
-  if (provinces.length && !state.query) {
+  if (state.routeError && !state.selectedCaseKey) {
+    const errorHeading = state.routeError === 'withdrawn'
+      ? 'Sprawa została wycofana'
+      : state.routeError === 'not_found'
+        ? 'Nie znaleziono sprawy'
+        : 'Sprawa jest chwilowo niedostępna';
+    const errorNote = state.routeError === 'withdrawn'
+      ? 'Sprawa nie jest już publikowana w aktualnych danych. Nie pokazujemy nieaktualnych szczegółów.'
+      : state.routeError === 'not_found'
+        ? 'Ten adres nie prowadzi do opublikowanej sprawy. Sprawdź link albo wróć do mapy.'
+        : 'Nie udało się teraz pobrać sprawy. Odśwież stronę za chwilę; bezpośredni adres pozostaje bez zmian.';
+    ui.list.replaceChildren();
+    ui.list.classList.remove('is-province-list', 'is-cluster-list');
+    ui.casesEyebrow.textContent = 'Bezpośredni adres sprawy';
+    ui.casesHeading.textContent = errorHeading;
+    ui.resultCount.textContent = '0';
+    ui.listNote.textContent = errorNote;
+    ui.emptyMessage.textContent = `${errorHeading}. ${errorNote} Wróć do mapy, aby wyszukać aktualne sprawy.`;
+    ui.empty.hidden = false;
+    ui.loadMore.hidden = true;
+    return;
+  }
+  ui.emptyMessage.textContent = 'Brak spraw dla wybranych kryteriów.';
+  if (provinces.length && !state.query && !state.selectedCaseKey) {
     renderProvinceChoices(provinces);
     return;
   }
@@ -1043,6 +1156,10 @@ function renderCases() {
     if (allMonitored && hasPaused) radarAction.textContent = 'Monitoring wstrzymany — wznów w Radarze';
     else radarAction.textContent = allMonitored ? '✓ Działka jest obserwowana' : '◉ Obserwuj działkę w Radarze';
     radarAction.addEventListener('click', () => { void watchSelectedParcels(detail); });
+    const shareAction = fragment.querySelector('.share-action');
+    shareAction.disabled = !detail;
+    shareAction.addEventListener('click', () => { if (detail) void shareCase(detail); });
+    fragment.querySelector('.share-state').textContent = selected ? state.shareNotice : '';
     button.setAttribute('aria-expanded', String(selected));
     button.addEventListener('click', () => { void selectCase(key, { moveMap: true }); });
     ui.list.append(fragment);
@@ -1073,17 +1190,15 @@ function setBaseLayer(layer) {
 }
 
 function setMapFeatures(collection) {
-  state.features = (collection.features || []).filter((feature) => (
+  const incoming = (collection.features || []).filter((feature) => (
     feature.properties?.cluster || Number(feature.properties?.parcel_count || 0) > 0
   ));
-  if (state.selectedCaseKey && !state.features.some((feature) => (
+  if (state.selectedDetail && !incoming.some((feature) => (
     !feature.properties.cluster && caseKey(feature.properties) === state.selectedCaseKey
   ))) {
-    state.selectedCaseKey = null;
-    state.selectedDetail = null;
-    state.selectedContext = null;
-    state.map?.getSource('selected-parcels')?.setData(emptyCollection());
+    incoming.unshift(featureFromDetail(state.selectedDetail));
   }
+  state.features = incoming;
   const safeCollection = { type: 'FeatureCollection', features: state.features };
   state.map?.getSource('cases')?.setData(safeCollection);
   renderCases();
@@ -1167,13 +1282,16 @@ async function loadCaseContext(key) {
 }
 
 async function selectCase(key, options = {}) {
-  const { moveMap = false, showAerial = false, scrollToCard = false, toggle = true } = options;
+  const {
+    moveMap = false,
+    showAerial = false,
+    scrollToCard = false,
+    toggle = true,
+    updateHistory = true,
+    preserveRouteOnError = false,
+  } = options;
   if (state.selectedCaseKey === key && state.selectedDetail && toggle) {
-    state.selectedCaseKey = null;
-    state.selectedDetail = null;
-    state.selectedContext = null;
-    state.map.getSource('selected-parcels')?.setData(emptyCollection());
-    renderCases();
+    closeSelectedCase({ updateHistory });
     return;
   }
   if (state.selectedCaseKey === key && state.selectedDetail) {
@@ -1187,14 +1305,28 @@ async function selectCase(key, options = {}) {
     return;
   }
   const previousDetail = state.selectedDetail;
+  state.caseRequestController?.abort();
+  const controller = new AbortController();
+  state.caseRequestController = controller;
+  state.routeError = null;
+  state.shareNotice = '';
   state.selectedCaseKey = key;
   state.selectedDetail = null;
   state.selectedContext = null;
+  if (updateHistory) updateCaseRoute(key);
+  else updateCanonical(key);
   renderCases();
   try {
-    const response = await fetch(`/api/cases/${encodeURIComponent(key)}`);
-    if (!response.ok) throw new Error(`API ${response.status}`);
-    state.selectedDetail = await response.json();
+    const response = await fetch(`/api/cases/${encodeURIComponent(key)}`, { signal: controller.signal });
+    if (!response.ok) {
+      const error = new Error(`API ${response.status}`);
+      error.status = response.status;
+      throw error;
+    }
+    const detail = await response.json();
+    if (state.caseRequestController !== controller || state.selectedCaseKey !== key) return;
+    state.selectedDetail = detail;
+    keepSelectedFeature(state.selectedDetail);
     state.selectedContext = { status: 'loading' };
     const features = parcelFeatures(state.selectedDetail);
     if (!features.length) throw new Error('Brak geometrii działki');
@@ -1210,13 +1342,42 @@ async function selectCase(key, options = {}) {
       }
     }
     if (scrollToCard) scrollSelectedCard();
-  } catch {
+  } catch (error) {
+    if (error.name === 'AbortError' || state.caseRequestController !== controller || state.selectedCaseKey !== key) return;
     state.selectedCaseKey = null;
     state.selectedDetail = null;
     state.selectedContext = null;
     state.map.getSource('selected-parcels')?.setData(emptyCollection());
+    if (preserveRouteOnError) {
+      state.routeError = error.status === 410
+        ? 'withdrawn'
+        : error.status === 404
+          ? 'not_found'
+          : 'unavailable';
+      updateCanonical(key);
+    } else {
+      updateCaseRoute(null, { replace: true });
+    }
     renderCases();
-    ui.listNote.textContent = 'Nie udało się pobrać szczegółów tej sprawy.';
+    if (!preserveRouteOnError) ui.listNote.textContent = 'Nie udało się pobrać szczegółów tej sprawy.';
+  } finally {
+    if (state.caseRequestController === controller) state.caseRequestController = null;
+  }
+}
+
+function initializePublicRoute() {
+  if (state.routeInitialized) return;
+  state.routeInitialized = true;
+  const key = caseKeyFromPath();
+  updateCanonical(key);
+  if (key) {
+    void selectCase(key, {
+      moveMap: true,
+      scrollToCard: true,
+      toggle: false,
+      updateHistory: false,
+      preserveRouteOnError: true,
+    });
   }
 }
 
@@ -1308,6 +1469,7 @@ function initializeMap() {
     }
     state.map.on('moveend', () => scheduleMapData());
     void loadMapData();
+    initializePublicRoute();
     layersInitializing = false;
   };
   const waitForLayers = () => {
@@ -1406,6 +1568,21 @@ ui.radarMore.addEventListener('click', async () => {
   await loadServerRadar();
   if (ui.radarMore.hidden) ui.radarClose.focus();
   else ui.radarMore.focus();
+});
+
+window.addEventListener('popstate', () => {
+  const key = caseKeyFromPath();
+  if (!key) {
+    closeSelectedCase({ updateHistory: false });
+    return;
+  }
+  void selectCase(key, {
+    moveMap: true,
+    scrollToCard: true,
+    toggle: false,
+    updateHistory: false,
+    preserveRouteOnError: true,
+  });
 });
 
 initializeMap();

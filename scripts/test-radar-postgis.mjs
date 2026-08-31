@@ -38,6 +38,8 @@ await client.connect();
 try {
   const migrations = await client.query("SELECT name FROM schema_migrations WHERE name='011_server_radar.sql'");
   assert.equal(migrations.rowCount, 1);
+  const publicationHistoryMigration = await client.query("SELECT name FROM schema_migrations WHERE name='012_case_publication_history.sql'");
+  assert.equal(publicationHistoryMigration.rowCount, 1);
 
   await client.query(`
     TRUNCATE radar_matches,radar_watch_parcels,radar_watches,radar_profiles,

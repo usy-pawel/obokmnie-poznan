@@ -216,6 +216,80 @@ try {
   }
 
   await publishCase('one');
+  await database.query(`
+    UPDATE cases
+    SET published=true, location=ST_SetSRID(ST_Point(16.9,52.4),4326)
+    WHERE case_key='case:api:one'
+  `);
+  const publicCasePath = `/sprawa/${encodeURIComponent('case:api:one')}`;
+  const publicCasePage = await fetch(`${origin}${publicCasePath}`);
+  assert.equal(publicCasePage.status, 200);
+  assert.match(publicCasePage.headers.get('content-type'), /^text\/html/u);
+  assert.match(publicCasePage.headers.get('cache-control'), /no-store/u);
+  const publicCaseHtml = await publicCasePage.text();
+  assert.match(publicCaseHtml, /rel="canonical" href="\/sprawa\/case%3Aapi%3Aone"/u);
+  assert.match(publicCaseHtml, /name="robots" content="noindex,follow"/u);
+  const publicCaseDetail = await api(`/api/cases/${encodeURIComponent('case:api:one')}`);
+  assert.equal(publicCaseDetail.response.status, 200);
+  assert.equal(publicCaseDetail.payload.case_key, 'case:api:one');
+
+  await database.query(`
+    UPDATE cases SET source_active=false, published=false
+    WHERE case_key='case:api:one'
+  `);
+  const withdrawnCasePage = await fetch(`${origin}${publicCasePath}`);
+  assert.equal(withdrawnCasePage.status, 410);
+  const withdrawnCaseDetail = await api(`/api/cases/${encodeURIComponent('case:api:one')}`);
+  assert.equal(withdrawnCaseDetail.response.status, 410);
+  assert.equal(withdrawnCaseDetail.payload.error, 'case_withdrawn');
+  const missingCasePage = await fetch(`${origin}/sprawa/brak`);
+  assert.equal(missingCasePage.status, 404);
+  const missingCaseDetail = await api('/api/cases/brak');
+  assert.equal(missingCaseDetail.response.status, 404);
+  await publishCase('never-public', 'PUBLIC-NEVER');
+  const neverPublicPath = `/sprawa/${encodeURIComponent('case:api:never-public')}`;
+  assert.equal((await fetch(`${origin}${neverPublicPath}`)).status, 404);
+  assert.equal((await api(`/api/cases/${encodeURIComponent('case:api:never-public')}`)).response.status, 404);
+
+  await publishCase('slash/id', 'PUBLIC-SLASH');
+  await database.query(`
+    UPDATE cases
+    SET published=true, location=ST_SetSRID(ST_Point(16.9,52.4),4326)
+    WHERE case_key='case:api:slash/id'
+  `);
+  const slashCasePath = `/sprawa/${encodeURIComponent('case:api:slash/id')}`;
+  assert.equal((await fetch(`${origin}${slashCasePath}`)).status, 200);
+  assert.equal((await api(`/api/cases/${encodeURIComponent('case:api:slash/id')}`)).response.status, 200);
+  assert.equal((await fetch(`${origin}/SPRAWA/${encodeURIComponent('case:api:slash/id')}`)).status, 404);
+
+  const longSuffix = `long-${'x'.repeat(220)}`;
+  const longCaseKey = `case:api:${longSuffix}`;
+  await publishCase(longSuffix, 'PUBLIC-LONG');
+  await database.query(`
+    UPDATE cases
+    SET published=true, location=ST_SetSRID(ST_Point(16.9,52.4),4326)
+    WHERE case_key=$1
+  `, [longCaseKey]);
+  assert.equal((await fetch(`${origin}/sprawa/${encodeURIComponent(longCaseKey)}`)).status, 200);
+  assert.equal((await api(`/api/cases/${encodeURIComponent(longCaseKey)}`)).response.status, 200);
+
+  await database.query('ALTER TABLE cases RENAME TO cases_temporarily_unavailable');
+  try {
+    const unavailableCasePage = await fetch(`${origin}${publicCasePath}`);
+    assert.equal(unavailableCasePage.status, 503);
+    assert.match(unavailableCasePage.headers.get('content-type'), /^text\/html/u);
+    const unavailableCaseHtml = await unavailableCasePage.text();
+    assert.match(unavailableCaseHtml, /rel="canonical" href="\/sprawa\/case%3Aapi%3Aone"/u);
+    assert.match(unavailableCaseHtml, /name="robots" content="noindex,follow"/u);
+  } finally {
+    await database.query('ALTER TABLE cases_temporarily_unavailable RENAME TO cases');
+  }
+
+  const malformedCasePage = await fetch(`${origin}/sprawa/%E0%A4%A`);
+  assert.equal(malformedCasePage.status, 404);
+  assert.match(malformedCasePage.headers.get('content-type'), /^text\/html/u);
+  assert.match(await malformedCasePage.text(), /name="robots" content="noindex,follow"/u);
+
   const firstFeed = await api('/api/radar/events', { cookies: profileCookies });
   assert.equal(firstFeed.response.status, 200);
   assert.equal(firstFeed.payload.events.length, 1);

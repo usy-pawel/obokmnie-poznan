@@ -1,6 +1,7 @@
 import express from 'express';
 import pg from 'pg';
 import compression from 'compression';
+import { readFileSync } from 'node:fs';
 import {
   buildContextFacts,
   contextFingerprint,
@@ -15,6 +16,7 @@ const app = express();
 const port = Number(process.env.PORT || 3000);
 const host = process.env.HOST || '0.0.0.0';
 app.set('trust proxy', 1);
+app.set('case sensitive routing', true);
 const VOIVODESHIPS = new Set([
   'dolnośląskie', 'kujawsko-pomorskie', 'lubelskie', 'lubuskie', 'łódzkie', 'małopolskie',
   'mazowieckie', 'opolskie', 'podkarpackie', 'podlaskie', 'pomorskie', 'śląskie',
@@ -39,6 +41,7 @@ const pool = process.env.DATABASE_URL
   : null;
 const contextInFlight = new Map();
 const contextRateLimits = new Map();
+const publicIndexHtml = readFileSync(new URL('./public/index.html', import.meta.url), 'utf8');
 const CONTEXT_RATE_LIMIT = 20;
 const CONTEXT_RATE_WINDOW_MS = 60 * 60 * 1000;
 
@@ -72,6 +75,39 @@ function selectedDateRange(value) {
 app.disable('x-powered-by');
 app.use(compression());
 app.use(express.static('public', { maxAge: '1h', etag: true }));
+
+function sendPublicApp(response, statusCode, caseKey) {
+  const casePath = `/sprawa/${encodeURIComponent(caseKey)}`;
+  const html = publicIndexHtml
+    .replace('id="canonical-link" rel="canonical" href="/"', `id="canonical-link" rel="canonical" href="${casePath}"`)
+    .replace('id="robots-meta" name="robots" content="index,follow"', 'id="robots-meta" name="robots" content="noindex,follow"');
+  response
+    .set('Cache-Control', 'no-store')
+    .status(statusCode)
+    .type('html')
+    .send(html);
+}
+
+app.get('/sprawa/:caseKey', async (request, response, next) => {
+  try {
+    const caseKey = String(request.params.caseKey || '');
+    if (!caseKey || /[\u0000-\u001f]/u.test(caseKey)) {
+      return sendPublicApp(response, 404, caseKey || 'brak');
+    }
+    if (!pool) return sendPublicApp(response, 200, caseKey);
+    const result = await pool.query(`
+      SELECT published, ever_published
+      FROM cases
+      WHERE case_key=$1
+      LIMIT 1
+    `, [caseKey]);
+    if (!result.rowCount) return sendPublicApp(response, 404, caseKey);
+    const statusCode = result.rows[0].published ? 200 : result.rows[0].ever_published ? 410 : 404;
+    return sendPublicApp(response, statusCode, caseKey);
+  } catch {
+    return sendPublicApp(response, 503, String(request.params.caseKey || 'brak'));
+  }
+});
 
 app.get('/health', async (_request, response) => {
   const result = await readHealth(pool);
@@ -372,7 +408,7 @@ app.get('/api/radar', async (request, response, next) => {
 app.get('/api/cases/:caseKey', async (request, response, next) => {
   try {
     const result = await pool.query(`
-      SELECT c.case_key, c.external_id, c.source_type,
+      SELECT c.case_key, c.external_id, c.source_type, c.published, c.ever_published,
              to_char(c.received_date,'YYYY-MM-DD') AS received_date,
              to_char(c.decision_date,'YYYY-MM-DD') AS decision_date,
              c.status, c.office, c.voivodeship, c.city, c.address, c.case_kind, c.description,
@@ -382,11 +418,18 @@ app.get('/api/cases/:caseKey', async (request, response, next) => {
       FROM cases c
       LEFT JOIN case_parcels cp ON cp.case_id=c.id
       LEFT JOIN parcels p ON p.parcel_id=cp.parcel_id
-      WHERE c.case_key=$1 AND c.published
+      WHERE c.case_key=$1
       GROUP BY c.id
     `, [request.params.caseKey]);
     if (!result.rowCount) return response.status(404).json({ error: 'not_found' });
-    response.json(result.rows[0]);
+    const detail = result.rows[0];
+    if (!detail.published && detail.ever_published) {
+      return response.status(410).json({ error: 'case_withdrawn' });
+    }
+    if (!detail.published) return response.status(404).json({ error: 'not_found' });
+    delete detail.published;
+    delete detail.ever_published;
+    response.json(detail);
   } catch (error) { next(error); }
 });
 
@@ -472,7 +515,10 @@ app.use('/api', (_request, response) => response
   .set('Cache-Control', 'no-store')
   .status(404)
   .json({ error: 'not_found' }));
-app.use((error, _request, response, _next) => {
+app.use((error, request, response, _next) => {
+  if (error instanceof URIError && String(request.originalUrl || '').startsWith('/sprawa/')) {
+    return sendPublicApp(response, 404, 'brak');
+  }
   console.error(error);
   response.status(500).json({ error: 'internal_error' });
 });

@@ -126,6 +126,7 @@ async function fulfillJson(route, payload, { status = 200, delayMs = 0 } = {}) {
 }
 
 async function installDeterministicRoutes(page, {
+  caseDetailDelays = {},
   contextDelayMs = 0,
   mapDelayMs = 20,
   realMap = false,
@@ -149,7 +150,7 @@ async function installDeterministicRoutes(page, {
       await route.abort('blockedbyclient');
     }
   });
-  await page.route(`${origin}/`, (route) => route.fulfill({
+  const appShell = (route) => route.fulfill({
     status: 200,
     contentType: 'text/html; charset=utf-8',
     body: realMap
@@ -157,7 +158,9 @@ async function installDeterministicRoutes(page, {
       : indexHtml
         .replace(maplibreRealSri, sri(maplibreStub))
         .replace(maplibreCssSri, sri('')),
-  }));
+  });
+  await page.route(`${origin}/`, appShell);
+  await page.route(`${origin}/sprawa/**`, appShell);
   await page.route(maplibreScriptUrl, (route) => route.fulfill({
     status: 200,
     contentType: 'application/javascript; charset=utf-8',
@@ -242,7 +245,19 @@ async function installDeterministicRoutes(page, {
     }
     if (url.pathname.startsWith('/api/cases/')) {
       const key = decodeURIComponent(url.pathname.slice('/api/cases/'.length));
-      await fulfillJson(route, caseDetail(key));
+      if (key === 'brak') {
+        await fulfillJson(route, { error: 'not_found' }, { status: 404 });
+        return;
+      }
+      if (key === 'wycofana') {
+        await fulfillJson(route, { error: 'case_withdrawn' }, { status: 410 });
+        return;
+      }
+      if (key === 'awaria') {
+        await fulfillJson(route, { error: 'internal_error' }, { status: 503 });
+        return;
+      }
+      await fulfillJson(route, caseDetail(key), { delayMs: caseDetailDelays[key] || 0 });
       return;
     }
     if (url.pathname === '/api/suggestions') {
@@ -332,6 +347,96 @@ test('hierarchia mapy, wybór działki i historia pozostają spójne', async ({ 
   expect(diagnostics.unexpectedRequests).toEqual([]);
 });
 
+test('trwały adres otwiera sprawę, ustawia canonical i udostępnia bez pośredników', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'share', {
+      configurable: true,
+      value: async (payload) => { window.__sharedCase = payload; },
+    });
+  });
+  const diagnostics = await installDeterministicRoutes(page);
+  const caseUrl = `${appOrigin()}/sprawa/pozwolenie%3Acurrent`;
+  await page.goto(caseUrl);
+
+  const card = page.locator('.case-card[data-case-id="pozwolenie:current"]');
+  await expect(card).toHaveClass(/is-selected/);
+  await expect(card.locator('.case-details')).toBeVisible();
+  await expect(page.locator('#canonical-link')).toHaveAttribute('href', caseUrl);
+  await expect(page.locator('#robots-meta')).toHaveAttribute('content', 'noindex,follow');
+
+  await card.locator('.share-action').click();
+  await expect(card.locator('.share-state')).toHaveText('Udostępniono sprawę.');
+  expect(await page.evaluate(() => window.__sharedCase)).toMatchObject({ url: caseUrl });
+
+  await card.locator('.case-card-button').click();
+  await expect(page).toHaveURL(`${appOrigin()}/`);
+  await expect(page.locator('#robots-meta')).toHaveAttribute('content', 'index,follow');
+  await page.goBack();
+  await expect(card).toHaveClass(/is-selected/);
+
+  const slashKey = 'pozwolenie:TEST/123';
+  const slashUrl = `${appOrigin()}/sprawa/${encodeURIComponent(slashKey)}`;
+  await page.goto(slashUrl);
+  await expect(page.locator(`.case-card[data-case-id="${slashKey}"]`)).toHaveClass(/is-selected/);
+  await expect(page.locator('#canonical-link')).toHaveAttribute('href', slashUrl);
+  expect((await page.request.get(`${appOrigin()}/SPRAWA/${encodeURIComponent(slashKey)}`)).status()).toBe(404);
+
+  const longKey = `pozwolenie:${'x'.repeat(220)}`;
+  const longUrl = `${appOrigin()}/sprawa/${encodeURIComponent(longKey)}`;
+  await page.goto(longUrl);
+  await expect(page.locator('.case-card.is-selected')).toHaveAttribute('data-case-id', longKey);
+  await expect(page.locator('#canonical-link')).toHaveAttribute('href', longUrl);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
+test('spóźniona odpowiedź szczegółów nie nadpisuje nowszego wyboru ani powrotu do mapy', async ({ page }) => {
+  const diagnostics = await installDeterministicRoutes(page, {
+    caseDetailDelays: { 'pozwolenie:current': 400, 'pozwolenie:history': 20 },
+  });
+  await page.goto(`${appOrigin()}/`);
+  await drillDownToCases(page);
+  await page.getByRole('button', { name: '3 lata' }).click();
+  await expect(page.locator('.case-card')).toHaveCount(2);
+
+  await page.locator('.case-card[data-case-id="pozwolenie:current"] .case-card-button').click();
+  await page.locator('.case-card[data-case-id="pozwolenie:history"] .case-card-button').click();
+  const history = page.locator('.case-card[data-case-id="pozwolenie:history"]');
+  await expect(history).toHaveClass(/is-selected/);
+  await expect(history.locator('.detail-id')).toHaveText('WA-2024-009');
+  await page.waitForTimeout(450);
+  await expect(history).toHaveClass(/is-selected/);
+  await expect(history.locator('.detail-id')).toHaveText('WA-2024-009');
+
+  await page.goto(`${appOrigin()}/`);
+  await drillDownToCases(page);
+  await page.locator('.case-card[data-case-id="pozwolenie:current"] .case-card-button').click();
+  await page.evaluate(() => history.back());
+  await expect(page).toHaveURL(`${appOrigin()}/`);
+  await page.waitForTimeout(450);
+  await expect(page.locator('.case-card.is-selected')).toHaveCount(0);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
+test('trwały adres rozróżnia brak sprawy od wycofania', async ({ page }) => {
+  const diagnostics = await installDeterministicRoutes(page);
+  await page.goto(`${appOrigin()}/sprawa/brak`);
+  await expect(page.locator('#cases-heading')).toHaveText('Nie znaleziono sprawy');
+  await expect(page.locator('#list-note')).toContainText('nie prowadzi do opublikowanej sprawy');
+
+  await page.goto(`${appOrigin()}/sprawa/wycofana`);
+  await expect(page.locator('#cases-heading')).toHaveText('Sprawa została wycofana');
+  await expect(page.locator('#list-note')).toContainText('nie jest już publikowana');
+
+  await page.goto(`${appOrigin()}/sprawa/awaria`);
+  await expect(page.locator('#cases-heading')).toHaveText('Sprawa jest chwilowo niedostępna');
+  await expect(page.locator('#list-note')).toContainText('Odśwież stronę za chwilę');
+  await expect(page).toHaveURL(`${appOrigin()}/sprawa/awaria`);
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
 test('zimny start klienta mieści się w budżecie i nie blokuje interfejsu overlayem', async ({ page }, testInfo) => {
   const diagnostics = await installDeterministicRoutes(page, { mapDelayMs: 300 });
   const startedAt = Date.now();
@@ -385,7 +490,8 @@ test('fallback Radaru zapisuje obserwację i odtwarza ją po odświeżeniu', asy
   await expect(card.locator('.radar-action')).toHaveText('✓ Działka jest obserwowana');
 
   await page.reload();
-  await expect(page.locator('#cases-heading')).toHaveText('Wybierz województwo');
+  await expect(card).toHaveClass(/is-selected/);
+  await expect(card.locator('.case-details')).toBeVisible();
   await page.locator('#radar-toggle').click();
   await expect(page.locator('#radar-panel')).toBeVisible();
   await expect(page.locator('.radar-watch')).toContainText(parcelId);
