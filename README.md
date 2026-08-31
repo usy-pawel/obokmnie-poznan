@@ -90,7 +90,11 @@ do lokalnego cache i wykonuje testy desktop/mobile wyłącznie na syntetycznych 
 porcie loopback. Nie wymaga sekretów ani połączenia z produkcją.
 
 Pełna bramka wydania `npm run check:release` uruchamia dodatkowo E2E, migrację 010→011 oraz testy
-SQL/API na losowej bazie `radar_test_*` dostępnej wyłącznie przez loopback.
+SQL/API na losowej bazie `radar_test_*` dostępnej wyłącznie przez loopback. Obejmuje też
+`npm run test:recovery`: jednorazowy lokalny kontener przypięty digestem PostGIS, pełny
+`pg_dump`/`pg_restore`, porównanie stanu Radaru, reset starego lease/fencingu i ponowne uruchomienie
+testów API po odtworzeniu. Procesy mają deadline, a błąd cleanupu oblewa test. Kontener oraz losowe
+bazy są usuwane po teście; żadne połączenie produkcyjne nie jest używane.
 
 ## Aktualizacja danych
 

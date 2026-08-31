@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { randomBytes, randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
 import pg from 'pg';
 
 if (process.env.RADAR_TEST_DATABASE !== '1') {
@@ -125,8 +126,11 @@ try {
   `, [newImport]);
   await client.query("SELECT pg_advisory_xact_lock(hashtext('radar_watch_projection'))");
   await client.query("UPDATE imports SET status='success',finished_at=clock_timestamp() WHERE id=$1", [newImport]);
+  const smokeProjectionStartedAt = performance.now();
   const firstProjection = await client.query('SELECT * FROM radar_project_import($1)', [newImport]);
+  const smokeProjectionMilliseconds = performance.now() - smokeProjectionStartedAt;
   await client.query('COMMIT');
+  assert.ok(smokeProjectionMilliseconds <= 2_000);
   assert.equal(Number(firstProjection.rows[0].event_count), 1);
   assert.equal(Number(firstProjection.rows[0].match_count), 5);
 
@@ -205,6 +209,70 @@ try {
       assert.equal(ids.has(radiusCases.find((row) => row[0] === parcelId)[index]), radiusCases.find((row) => row[0] === parcelId)[index + 1]);
     }
   }
+
+  const performanceProfileCount = 100;
+  const performanceEventCount = 200;
+  await client.query(`
+    INSERT INTO radar_profiles(id,token_hash,csrf_hash,inactive_expires_at,absolute_expires_at)
+    SELECT
+      md5('perf-profile-' || sequence)::uuid,
+      decode(md5('perf-token-a-' || sequence) || md5('perf-token-b-' || sequence), 'hex'),
+      decode(md5('perf-csrf-a-' || sequence) || md5('perf-csrf-b-' || sequence), 'hex'),
+      clock_timestamp()+interval '90 days',
+      clock_timestamp()+interval '365 days'
+    FROM generate_series(1,$1) sequence
+  `, [performanceProfileCount]);
+  await client.query(`
+    INSERT INTO radar_watches(
+      id,profile_id,client_key,request_hash,kind,anchor,radius_m,starts_after_import_id
+    )
+    SELECT
+      md5(kind || '-watch-' || sequence)::uuid,
+      md5('perf-profile-' || sequence)::uuid,
+      md5(kind || '-client-' || sequence)::uuid,
+      decode(md5(kind || '-request-a-' || sequence) || md5(kind || '-request-b-' || sequence), 'hex'),
+      kind,
+      CASE WHEN kind='radius' THEN ST_SetSRID(ST_Point(16.9,52.4),4326) END,
+      CASE WHEN kind='radius' THEN 3000 END,
+      $2
+    FROM generate_series(1,$1) sequence
+    CROSS JOIN unnest(ARRAY['parcel','parcel_set','radius']) AS kinds(kind)
+  `, [performanceProfileCount, baselineId]);
+  await client.query(`
+    INSERT INTO radar_watch_parcels(watch_id,parcel_id)
+    SELECT md5(kind || '-watch-' || sequence)::uuid, parcel_id
+    FROM generate_series(1,$1) sequence
+    CROSS JOIN (
+      VALUES ('parcel','A'),('parcel_set','A'),('parcel_set','B')
+    ) membership(kind,parcel_id)
+  `, [performanceProfileCount]);
+
+  const performanceImport = await startImport();
+  await client.query('BEGIN');
+  await client.query("SELECT set_config('obokmnie.import_id',$1,false)", [String(performanceImport)]);
+  await client.query(`
+    INSERT INTO cases(
+      case_key,source_type,external_id,received_date,status,voivodeship,description,
+      parcel_ids,source_fingerprint,source_active,last_import_id
+    )
+    SELECT
+      'case:performance:' || sequence,'zgloszenie','performance-' || sequence,
+      current_date,'nowa','wielkopolskie','Test wydajności Radaru',
+      ARRAY['A'],'performance-fingerprint-' || sequence,true,$2
+    FROM generate_series(1,$1) sequence
+  `, [performanceEventCount, performanceImport]);
+  await client.query("SELECT pg_advisory_xact_lock(hashtext('radar_watch_projection'))");
+  await client.query("UPDATE imports SET status='success',finished_at=clock_timestamp() WHERE id=$1", [performanceImport]);
+  const representativeProjectionStartedAt = performance.now();
+  const representativeProjection = await client.query('SELECT * FROM radar_project_import($1)', [performanceImport]);
+  const representativeProjectionMilliseconds = performance.now() - representativeProjectionStartedAt;
+  await client.query('COMMIT');
+  assert.equal(Number(representativeProjection.rows[0].event_count), performanceEventCount);
+  assert.ok(Number(representativeProjection.rows[0].match_count) >= performanceProfileCount * 3 * performanceEventCount);
+  assert.ok(
+    representativeProjectionMilliseconds <= 8_000,
+    `Reprezentatywna projekcja przekroczyła budżet 8000 ms: ${representativeProjectionMilliseconds}`,
+  );
 
   const zeroImport = await startImport();
   const zero = await finishAndProject(zeroImport);
@@ -324,7 +392,15 @@ try {
       (SELECT count(*)::integer FROM radar_matches) AS matches,
       (SELECT count(*)::integer FROM radar_import_projections WHERE projection_kind='projected') AS projections
   `);
-  console.log(JSON.stringify({ ok: true, ...summary.rows[0] }));
+  console.log(JSON.stringify({
+    ok: true,
+    projection_budget_ms: 8_000,
+    projection_profiles: performanceProfileCount,
+    projection_watches: performanceProfileCount * 3,
+    projection_events: performanceEventCount,
+    projection_elapsed_ms: Number(representativeProjectionMilliseconds.toFixed(1)),
+    ...summary.rows[0],
+  }));
 } finally {
   await client.end();
 }

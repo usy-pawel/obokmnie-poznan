@@ -24,6 +24,10 @@ export default defineConfig({
       use: { viewport: { width: 1366, height: 900 } },
     },
     {
+      name: 'large-desktop-chromium',
+      use: { viewport: { width: 1920, height: 1080 } },
+    },
+    {
       name: 'mobile-chromium',
       use: {
         viewport: { width: 390, height: 844 },

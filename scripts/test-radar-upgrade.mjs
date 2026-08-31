@@ -87,6 +87,23 @@ try {
 
   const migration011 = await readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8');
   await upgrade.query('BEGIN');
+  await upgrade.query(migration011);
+  const interruptedBackend = await upgrade.query('SELECT pg_backend_pid() AS pid');
+  await admin.query('SELECT pg_terminate_backend($1)', [interruptedBackend.rows[0].pid]);
+  await assert.rejects(upgrade.query('COMMIT'));
+  await upgrade.end().catch(() => {});
+  upgrade = new pg.Client(config(upgradeUrl, 'radar_upgrade_test_reconnected'));
+  await upgrade.connect();
+  const interruptedDeployment = await upgrade.query(`
+    SELECT to_regclass('radar_profiles') IS NULL AS schema_rolled_back,
+           NOT EXISTS(
+             SELECT 1 FROM schema_migrations WHERE name='011_server_radar.sql'
+           ) AS migration_unrecorded
+  `);
+  assert.equal(interruptedDeployment.rows[0].schema_rolled_back, true);
+  assert.equal(interruptedDeployment.rows[0].migration_unrecorded, true);
+
+  await upgrade.query('BEGIN');
   try {
     await upgrade.query(migration011);
     await upgrade.query("INSERT INTO schema_migrations(name) VALUES('011_server_radar.sql')");
@@ -167,7 +184,12 @@ try {
   assert.equal(recovered.rows.some((row) => String(row.import_id) === String(rollbackImport.rows[0].id)), true);
 
   const version = await upgrade.query('SELECT PostGIS_Version() AS version');
-  console.log(JSON.stringify({ ok: true, upgrade: '010_to_011', postgis: version.rows[0].version }));
+  console.log(JSON.stringify({
+    ok: true,
+    upgrade: '010_to_011',
+    interrupted_deployment_rollback: true,
+    postgis: version.rows[0].version,
+  }));
 } finally {
   if (upgrade) await upgrade.end().catch(() => {});
   await admin.query(`

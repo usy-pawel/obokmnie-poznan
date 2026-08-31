@@ -43,17 +43,30 @@ function cookieHeader(cookies) {
 const port = await freePort();
 const origin = `http://127.0.0.1:${port}`;
 const logs = [];
+const issuedSecrets = [];
+const serverEnvironment = {
+  ...process.env,
+  HOST: '127.0.0.1',
+  PORT: String(port),
+  PGSSLMODE: 'disable',
+  RADAR_SERVER_ENABLED: '1',
+  RADAR_ALLOWED_ORIGINS: origin,
+};
+for (const key of [
+  'DATABASE_PRIVATE_URL',
+  'DATABASE_PUBLIC_URL',
+  'MAINTENANCE_API_TOKEN',
+  'OPENAI_API_KEY',
+  'OPENAI_BASE_URL',
+  'OPENAI_CONTEXT_MODEL',
+]) delete serverEnvironment[key];
 const server = spawn(process.execPath, ['server.js'], {
   cwd: new URL('..', import.meta.url),
-  env: {
-    ...process.env,
-    PORT: String(port),
-    PGSSLMODE: 'disable',
-    RADAR_SERVER_ENABLED: '1',
-    RADAR_ALLOWED_ORIGINS: origin,
-  },
+  env: serverEnvironment,
   stdio: ['ignore', 'pipe', 'pipe'],
 });
+const serverDeadline = setTimeout(() => { server.kill('SIGKILL'); }, 150_000);
+serverDeadline.unref();
 server.stdout.on('data', (chunk) => logs.push(chunk.toString()));
 server.stderr.on('data', (chunk) => logs.push(chunk.toString()));
 
@@ -98,6 +111,7 @@ try {
   assert.equal(createdProfile.payload.version, 'radar_profile_v1');
   assert.match(createdProfile.response.headers.get('cache-control'), /no-store/);
   const profileCookies = cookiesFrom(createdProfile.response);
+  issuedSecrets.push(profileCookies.get('__Host-radar_profile'), profileCookies.get('__Host-radar_csrf'));
   assert.match(profileCookies.get('__Host-radar_profile'), /^[A-Za-z0-9_-]{43}$/);
   assert.match(profileCookies.get('__Host-radar_csrf'), /^[A-Za-z0-9_-]{43}$/);
   const setCookies = createdProfile.response.headers.getSetCookie();
@@ -117,6 +131,7 @@ try {
   });
   assert.equal(recoveredProfile.response.status, 200);
   const recoveredCookies = cookiesFrom(recoveredProfile.response);
+  issuedSecrets.push(recoveredCookies.get('__Host-radar_profile'), recoveredCookies.get('__Host-radar_csrf'));
   assert.notEqual(recoveredCookies.get('__Host-radar_csrf'), csrf);
   profileCookies.set('__Host-radar_profile', recoveredCookies.get('__Host-radar_profile'));
   profileCookies.set('__Host-radar_csrf', recoveredCookies.get('__Host-radar_csrf'));
@@ -162,6 +177,7 @@ try {
 
   const profileTwo = await api('/api/radar/profile', { method: 'POST', body: {} });
   const profileTwoCookies = cookiesFrom(profileTwo.response);
+  issuedSecrets.push(profileTwoCookies.get('__Host-radar_profile'), profileTwoCookies.get('__Host-radar_csrf'));
   const profileTwoList = await api('/api/radar/monitors', { cookies: profileTwoCookies });
   assert.equal(profileTwoList.response.status, 200);
   assert.equal(profileTwoList.payload.monitors.length, 0);
@@ -210,7 +226,7 @@ try {
   const invalidCursor = await api('/api/radar/events?after_match_id=99999999999999999999', { cookies: profileCookies });
   assert.equal(invalidCursor.response.status, 400);
 
-  const observationStarted = new Date().toISOString();
+  const observationStarted = new Date(Date.now() - 1_000).toISOString();
   await publishCase('late-b', 'B');
   const migratedWatch = await api('/api/radar/monitors', {
     method: 'POST', cookies: profileCookies, csrf,
@@ -332,8 +348,19 @@ try {
   assert.equal(unavailable.response.status, 401);
   assert.equal(unavailable.payload.error, 'profile_unavailable');
 
-  console.log(JSON.stringify({ ok: true, profile_isolation: true, csrf: true, idempotency: true, limits: true }));
+  const serverLogs = logs.join('');
+  for (const secret of issuedSecrets.filter(Boolean)) assert.doesNotMatch(serverLogs, new RegExp(secret, 'u'));
+
+  console.log(JSON.stringify({
+    ok: true,
+    profile_isolation: true,
+    csrf: true,
+    idempotency: true,
+    limits: true,
+    raw_tokens_absent_from_logs: true,
+  }));
 } finally {
+  clearTimeout(serverDeadline);
   await database.end().catch(() => {});
   server.kill('SIGTERM');
   await new Promise((resolve) => {

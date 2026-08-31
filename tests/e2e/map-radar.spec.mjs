@@ -353,6 +353,7 @@ test('zimny start klienta mieści się w budżecie i nie blokuje interfejsu over
     scenario: 'fresh_client_shell_no_cache',
     map_implementation: 'deterministic_stub',
     project: testInfo.project.name,
+    viewport: page.viewportSize(),
     elapsed_ms: elapsedMs,
     budget_ms: COLD_START_BUDGET_MS,
     map_requests: diagnostics.mapRequests.length,
