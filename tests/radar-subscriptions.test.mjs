@@ -106,8 +106,19 @@ test('event feed advances only through rows that fit the 256 KiB envelope', () =
   const feed = boundedEventFeed(rows, '40', '2026-08-30T12:00:00.000Z');
   assert.equal(feed.events.length, 2);
   assert.equal(feed.next_after_match_id, '42');
+  assert.equal(feed.has_more, false);
   assert.equal(feed.events[0].snapshot.parcel_ids[0].length, 120);
   assert.ok(Buffer.byteLength(JSON.stringify(feed)) <= 256 * 1024);
+});
+
+test('event feed exposes an exact continuation signal independent of page size', () => {
+  const rows = Array.from({ length: 3 }, (_, index) => ({
+    match_id: String(index + 1), event_id: String(index + 1), import_id: '1', snapshot: {},
+  }));
+  const feed = boundedEventFeed(rows, '0', '2026-08-30T12:00:00.000Z', 2);
+  assert.equal(feed.events.length, 2);
+  assert.equal(feed.next_after_match_id, '2');
+  assert.equal(feed.has_more, true);
 });
 
 test('top-level payload rejects extra or missing properties', () => {

@@ -1,8 +1,21 @@
+import {
+  createRadarClient,
+  isRetryableRadarError,
+  monitorCreateBody,
+  monitorIncludesParcel,
+  monitorLabel,
+  monitorTargetKey,
+  radarErrorMessage,
+  removeMonitorBackup,
+  reusablePendingCreate,
+} from './radar-client.js?v=radar-1';
+
 const MAP_STYLE = 'https://tiles.openfreemap.org/styles/positron';
 const ORTHO_TILE_URL = 'https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=ORTOFOTOMAPA&STYLE=default&TILEMATRIXSET=EPSG:3857&TILEMATRIX=EPSG:3857:{z}&TILEROW={y}&TILECOL={x}&FORMAT=image/jpeg';
 const LIST_SIZE = 80;
 const RADAR_STORAGE_KEY = 'obokmnie-radar-v1';
 const RADAR_SEEN_KEY = 'obokmnie-radar-seen-v1';
+const RADAR_PENDING_KEY = 'obokmnie-radar-pending-v1';
 const RANGE_COPY = {
   '1y': 'ostatnich 12 miesięcy',
   '3y': 'ostatnich 3 lat',
@@ -30,10 +43,18 @@ const state = {
   suggestionController: null,
   suggestionTimer: null,
   radarOpen: false,
+  radarMode: 'checking',
+  radarAuthenticated: false,
   radarWatches: readRadarWatches(),
+  radarPendingCreates: readRadarPendingCreates(),
+  radarMonitors: [],
   radarEvents: [],
   radarLoading: false,
   radarError: false,
+  radarNotice: '',
+  radarCursor: '0',
+  radarHasMore: false,
+  radarBusy: new Set(),
 };
 
 const ui = {
@@ -62,10 +83,14 @@ const ui = {
   radarCount: document.querySelector('#radar-count'),
   radarPanel: document.querySelector('#radar-panel'),
   radarClose: document.querySelector('#radar-close'),
+  radarMode: document.querySelector('#radar-mode'),
   radarWatches: document.querySelector('#radar-watches'),
   radarEvents: document.querySelector('#radar-events'),
+  radarMore: document.querySelector('#radar-more'),
   radarState: document.querySelector('#radar-state'),
 };
+
+const radarClient = createRadarClient();
 
 function readRadarWatches() {
   try {
@@ -78,6 +103,23 @@ function readRadarWatches() {
 
 function saveRadarWatches() {
   localStorage.setItem(RADAR_STORAGE_KEY, JSON.stringify(state.radarWatches));
+}
+
+function readRadarPendingCreates() {
+  try {
+    const pending = JSON.parse(localStorage.getItem(RADAR_PENDING_KEY) || '[]');
+    return Array.isArray(pending) ? pending.filter((body) => (
+      body?.version === 'radar_monitor_create_v1'
+      && typeof body.idempotency_key === 'string'
+      && monitorTargetKey(body.target)
+    )).slice(0, 20) : [];
+  } catch {
+    return [];
+  }
+}
+
+function saveRadarPendingCreates() {
+  localStorage.setItem(RADAR_PENDING_KEY, JSON.stringify(state.radarPendingCreates));
 }
 
 function radarEventLabel(type) {
@@ -96,8 +138,251 @@ function radarFieldLabel(field) {
 
 function eventMatchesWatch(event) {
   const parcels = event.snapshot?.parcel_ids || [];
-  return state.radarWatches.some((watch) => parcels.includes(watch.parcelId)
+  return state.radarWatches.some((watch) => !watch.serverPaused && parcels.includes(watch.parcelId)
     && new Date(event.occurred_at) > new Date(watch.watchedAt));
+}
+
+function parcelMonitorStatus(parcelId) {
+  if (state.radarMode === 'server') {
+    return state.radarMonitors.find((monitor) => monitorIncludesParcel(monitor, parcelId))?.status || null;
+  }
+  const watch = state.radarWatches.find((item) => item.parcelId === parcelId);
+  if (!watch) return null;
+  return watch.serverPaused ? 'paused' : 'active';
+}
+
+function appendRadarEvent(event) {
+  const article = document.createElement('article');
+  article.className = `radar-event is-${event.event_type}`;
+  const top = document.createElement('div');
+  const kind = document.createElement('strong');
+  kind.textContent = radarEventLabel(event.event_type);
+  const date = document.createElement('time');
+  date.textContent = formatDate(event.detected_at || event.occurred_at);
+  top.append(kind, date);
+  const title = document.createElement('h3');
+  title.textContent = shortTitle(event.snapshot?.description) || 'Sprawa budowlana';
+  const place = document.createElement('p');
+  place.textContent = event.snapshot?.address || event.snapshot?.city || event.snapshot?.external_id || '';
+  article.append(top, title, place);
+  if (event.changed_fields?.length) {
+    const fields = document.createElement('small');
+    fields.textContent = `Zakres: ${event.changed_fields.map(radarFieldLabel).join(', ')}`;
+    article.append(fields);
+  }
+  ui.radarEvents.append(article);
+}
+
+function renderBrowserWatch(watch) {
+  const chip = document.createElement('span');
+  chip.className = 'radar-watch';
+  const label = document.createElement('span');
+  label.textContent = `${watch.label || watch.parcelId}${watch.serverPaused ? ' · wstrzymany' : ''}`;
+  label.title = watch.parcelId;
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.setAttribute('aria-label', `Przestań obserwować działkę ${watch.parcelId}`);
+  remove.textContent = '×';
+  remove.addEventListener('click', () => {
+    state.radarWatches = state.radarWatches.filter((item) => item.parcelId !== watch.parcelId);
+    saveRadarWatches();
+    void loadRadar();
+    renderCases();
+    ui.radarClose.focus();
+  });
+  chip.append(label);
+  if (watch.serverPaused) {
+    const resume = document.createElement('button');
+    resume.type = 'button';
+    resume.textContent = 'Wznów';
+    resume.setAttribute('aria-label', `Wznów na tym urządzeniu: działka ${watch.parcelId}`);
+    resume.addEventListener('click', async () => {
+      watch.serverPaused = false;
+      saveRadarWatches();
+      state.radarNotice = `Obserwacja działki ${watch.parcelId} została wznowiona na tym urządzeniu.`;
+      await loadRadar();
+      renderCases();
+      ui.radarClose.focus();
+    });
+    chip.append(resume);
+  }
+  chip.append(remove);
+  ui.radarWatches.append(chip);
+}
+
+function handleExpiredRadarProfile(error) {
+  if (error?.status !== 401) return false;
+  state.radarAuthenticated = false;
+  state.radarMonitors = [];
+  state.radarEvents = [];
+  state.radarCursor = '0';
+  state.radarHasMore = false;
+  return true;
+}
+
+async function mutateServerMonitor(monitor, action) {
+  if (state.radarBusy.has(monitor.monitor_id)) return;
+  if (action === 'delete' && !window.confirm(`Usunąć monitoring „${monitorLabel(monitor.target)}”?`)) return;
+  state.radarBusy.add(monitor.monitor_id);
+  state.radarNotice = '';
+  renderRadar();
+  try {
+    if (action === 'delete') {
+      await radarClient.deleteMonitor(monitor.monitor_id);
+      state.radarMonitors = state.radarMonitors.filter((item) => item.monitor_id !== monitor.monitor_id);
+      state.radarEvents = state.radarEvents.filter((event) => (
+        !event.matched_monitor_ids?.includes(monitor.monitor_id)
+      ));
+      state.radarWatches = removeMonitorBackup(state.radarWatches, monitor.monitor_id);
+      state.radarPendingCreates = state.radarPendingCreates.filter((body) => (
+        monitorTargetKey(body.target) !== monitorTargetKey(monitor.target)
+      ));
+      saveRadarWatches();
+      saveRadarPendingCreates();
+      state.radarNotice = 'Monitoring został usunięty.';
+    } else {
+      const updated = action === 'pause'
+        ? await radarClient.pauseMonitor(monitor.monitor_id)
+        : await radarClient.resumeMonitor(monitor.monitor_id);
+      state.radarMonitors = state.radarMonitors.map((item) => (
+        item.monitor_id === updated.monitor_id ? updated : item
+      ));
+      for (const watch of state.radarWatches) {
+        if (watch.serverMonitorId === monitor.monitor_id) watch.serverPaused = action === 'pause';
+      }
+      saveRadarWatches();
+      state.radarNotice = action === 'pause' ? 'Monitoring został wstrzymany.' : 'Monitoring został wznowiony.';
+    }
+    renderCases();
+  } catch (error) {
+    state.radarNotice = handleExpiredRadarProfile(error)
+      ? 'Sesja Radaru wygasła. Możesz ponownie uruchomić monitoring bez zakładania konta.'
+      : radarErrorMessage(error);
+  } finally {
+    state.radarBusy.delete(monitor.monitor_id);
+    renderRadar();
+    if (action === 'delete' || !state.radarAuthenticated) ui.radarClose.focus();
+    else focusMonitorAction(monitor.monitor_id);
+  }
+}
+
+function renderServerMonitor(monitor) {
+  const item = document.createElement('article');
+  item.className = 'radar-monitor';
+  item.dataset.monitorId = monitor.monitor_id;
+  const copy = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = monitorLabel(monitor.target);
+  const status = document.createElement('span');
+  status.className = `radar-monitor-status is-${monitor.status}`;
+  status.textContent = monitor.status === 'paused' ? 'Wstrzymany' : 'Aktywny';
+  copy.append(title, status);
+  const actions = document.createElement('div');
+  actions.className = 'radar-monitor-actions';
+  const toggle = document.createElement('button');
+  toggle.type = 'button';
+  toggle.disabled = state.radarBusy.has(monitor.monitor_id);
+  toggle.textContent = monitor.status === 'paused' ? 'Wznów' : 'Wstrzymaj';
+  toggle.dataset.monitorAction = 'toggle';
+  toggle.setAttribute('aria-label', `${toggle.textContent} monitoring: ${monitorLabel(monitor.target)}`);
+  toggle.addEventListener('click', () => {
+    void mutateServerMonitor(monitor, monitor.status === 'paused' ? 'resume' : 'pause');
+  });
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'is-danger';
+  remove.disabled = state.radarBusy.has(monitor.monitor_id);
+  remove.textContent = 'Usuń';
+  remove.setAttribute('aria-label', `Usuń monitoring: ${monitorLabel(monitor.target)}`);
+  remove.addEventListener('click', () => { void mutateServerMonitor(monitor, 'delete'); });
+  actions.append(toggle, remove);
+  item.append(copy, actions);
+  ui.radarWatches.append(item);
+}
+
+function focusMonitorAction(monitorId) {
+  const item = [...ui.radarWatches.querySelectorAll('.radar-monitor')]
+    .find((candidate) => candidate.dataset.monitorId === monitorId);
+  item?.querySelector('[data-monitor-action="toggle"]')?.focus();
+}
+
+async function retryBrowserMigration(watch) {
+  const busyKey = `migration:${watch.serverKey}`;
+  if (state.radarBusy.has(busyKey)) return;
+  state.radarBusy.add(busyKey);
+  state.radarNotice = `Ponawiam przenoszenie działki ${watch.parcelId}…`;
+  renderRadar();
+  try {
+    const created = await migrateBrowserWatch(watch);
+    state.radarMonitors = [...new Map([...state.radarMonitors, created]
+      .map((monitor) => [monitor.monitor_id, monitor])).values()];
+    state.radarNotice = `Działka ${watch.parcelId} jest już bezpiecznie monitorowana.`;
+    renderCases();
+  } catch (error) {
+    markMigrationFailure(watch, error);
+    state.radarNotice = handleExpiredRadarProfile(error)
+      ? 'Sesja Radaru wygasła. Uruchom monitoring ponownie.'
+      : `Nie udało się przenieść działki ${watch.parcelId}. ${radarErrorMessage(error)}`;
+  } finally {
+    state.radarBusy.delete(busyKey);
+    renderRadar();
+    if (watch.serverMonitorId) focusMonitorAction(watch.serverMonitorId);
+    else focusMigrationAction(watch.serverKey);
+  }
+}
+
+function renderMigrationFailure(watch) {
+  const item = document.createElement('article');
+  item.className = 'radar-monitor is-error';
+  item.dataset.migrationKey = watch.serverKey;
+  const copy = document.createElement('div');
+  const title = document.createElement('strong');
+  title.textContent = `Działka ${watch.parcelId}`;
+  const status = document.createElement('span');
+  status.className = 'radar-monitor-status is-error';
+  status.textContent = 'Nieprzeniesiona';
+  copy.append(title, status);
+  const actions = document.createElement('div');
+  actions.className = 'radar-monitor-actions';
+  const retryable = watch.serverMigrationRetryable !== false;
+  if (!retryable) {
+    const explanation = document.createElement('small');
+    explanation.textContent = 'Tej obserwacji nie można przenieść automatycznie.';
+    copy.append(explanation);
+  }
+  const remove = document.createElement('button');
+  remove.type = 'button';
+  remove.className = 'is-danger';
+  remove.textContent = 'Usuń';
+  remove.dataset.migrationAction = 'remove';
+  remove.setAttribute('aria-label', `Usuń nieprzeniesioną obserwację: działka ${watch.parcelId}`);
+  remove.addEventListener('click', () => {
+    state.radarWatches = state.radarWatches.filter((item) => item !== watch);
+    saveRadarWatches();
+    state.radarNotice = `Nieprzeniesiona obserwacja działki ${watch.parcelId} została usunięta.`;
+    renderRadar();
+    renderCases();
+    ui.radarClose.focus();
+  });
+  if (retryable) {
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.disabled = state.radarBusy.has(`migration:${watch.serverKey}`);
+    retry.textContent = 'Ponów';
+    retry.dataset.migrationAction = 'retry';
+    retry.setAttribute('aria-label', `Ponów przenoszenie monitoringu: działka ${watch.parcelId}`);
+    retry.addEventListener('click', () => { void retryBrowserMigration(watch); });
+    actions.append(retry);
+  }
+  actions.append(remove);
+  item.append(copy, actions);
+  ui.radarWatches.append(item);
+}
+
+function focusMigrationAction(serverKey) {
+  const item = [...ui.radarWatches.querySelectorAll('.radar-monitor')]
+    .find((candidate) => candidate.dataset.migrationKey === serverKey);
+  item?.querySelector('[data-migration-action="retry"], [data-migration-action="remove"]')?.focus();
 }
 
 function renderRadar() {
@@ -106,61 +391,48 @@ function renderRadar() {
   ui.radarWatches.replaceChildren();
   ui.radarEvents.replaceChildren();
 
-  for (const watch of state.radarWatches) {
-    const chip = document.createElement('span');
-    chip.className = 'radar-watch';
-    const label = document.createElement('span');
-    label.textContent = watch.label || watch.parcelId;
-    label.title = watch.parcelId;
-    const remove = document.createElement('button');
-    remove.type = 'button';
-    remove.setAttribute('aria-label', `Przestań obserwować działkę ${watch.parcelId}`);
-    remove.textContent = '×';
-    remove.addEventListener('click', () => {
-      state.radarWatches = state.radarWatches.filter((item) => item.parcelId !== watch.parcelId);
-      saveRadarWatches();
-      void loadRadar();
-      renderCases();
-    });
-    chip.append(label, remove);
-    ui.radarWatches.append(chip);
+  if (state.radarMode === 'server') {
+    state.radarMonitors.forEach(renderServerMonitor);
+    state.radarWatches.filter((watch) => watch.serverMigrationError && !watch.serverMonitorId)
+      .forEach(renderMigrationFailure);
   }
+  else state.radarWatches.forEach(renderBrowserWatch);
 
-  const visibleEvents = state.radarEvents.filter(eventMatchesWatch);
-  for (const event of visibleEvents) {
-    const article = document.createElement('article');
-    article.className = `radar-event is-${event.event_type}`;
-    const top = document.createElement('div');
-    const kind = document.createElement('strong');
-    kind.textContent = radarEventLabel(event.event_type);
-    const date = document.createElement('time');
-    date.textContent = formatDate(event.detected_at || event.occurred_at);
-    top.append(kind, date);
-    const title = document.createElement('h3');
-    title.textContent = shortTitle(event.snapshot?.description) || 'Sprawa budowlana';
-    const place = document.createElement('p');
-    place.textContent = event.snapshot?.address || event.snapshot?.city || event.snapshot?.external_id || '';
-    article.append(top, title, place);
-    if (event.changed_fields?.length) {
-      const fields = document.createElement('small');
-      fields.textContent = `Zakres: ${event.changed_fields.map(radarFieldLabel).join(', ')}`;
-      article.append(fields);
-    }
-    ui.radarEvents.append(article);
-  }
+  const activeMonitorIds = new Set(state.radarMonitors
+    .filter((monitor) => monitor.status === 'active')
+    .map((monitor) => monitor.monitor_id));
+  const visibleEvents = state.radarMode === 'server'
+    ? state.radarEvents.filter((event) => event.matched_monitor_ids?.some((id) => activeMonitorIds.has(id)))
+    : state.radarEvents.filter(eventMatchesWatch);
+  const uniqueEvents = [...new Map(visibleEvents.map((event) => [event.event_id || event.match_id, event])).values()];
+  uniqueEvents.forEach(appendRadarEvent);
+  ui.radarMore.hidden = state.radarMode !== 'server' || !state.radarHasMore;
+  ui.radarMore.disabled = state.radarLoading;
 
   const lastSeen = new Date(localStorage.getItem(RADAR_SEEN_KEY) || 0);
-  const unseen = visibleEvents.filter((event) => new Date(event.occurred_at) > lastSeen).length;
+  const unseen = uniqueEvents.filter((event) => new Date(event.occurred_at) > lastSeen).length;
   ui.radarCount.textContent = String(unseen);
   ui.radarCount.hidden = unseen === 0;
-  if (!state.radarWatches.length) ui.radarState.textContent = 'Nie obserwujesz jeszcze żadnej działki. Rozwiń sprawę na mapie i wybierz „Obserwuj działkę”.';
+  if (state.radarMode === 'checking') {
+    ui.radarMode.textContent = 'Sprawdzam bezpieczne przechowywanie monitoringu…';
+  } else if (state.radarMode === 'server') {
+    ui.radarMode.textContent = 'Monitoring jest bezpiecznie zapisany i dostępny bez konta ani hasła.';
+  } else {
+    ui.radarMode.textContent = 'Monitoring jest zapisany na tym urządzeniu. Gdy synchronizacja będzie dostępna, zostanie bezpiecznie przeniesiony.';
+  }
+  const failedMigrations = state.radarWatches.filter((watch) => watch.serverMigrationError && !watch.serverMonitorId).length;
+  const monitorCount = state.radarMode === 'server'
+    ? state.radarMonitors.length + failedMigrations
+    : state.radarWatches.length;
+  if (state.radarNotice) ui.radarState.textContent = state.radarNotice;
+  else if (!monitorCount) ui.radarState.textContent = 'Nie obserwujesz jeszcze żadnej działki. Rozwiń sprawę na mapie i wybierz „Obserwuj działkę”.';
   else if (state.radarLoading) ui.radarState.textContent = 'Sprawdzam zmiany…';
   else if (state.radarError) ui.radarState.textContent = 'Nie udało się sprawdzić zmian. Spróbuj ponownie później.';
-  else if (!visibleEvents.length) ui.radarState.textContent = 'Brak nowych zmian od momentu rozpoczęcia obserwacji.';
-  else ui.radarState.textContent = `Znaleziono ${visibleEvents.length} ${visibleEvents.length === 1 ? 'zmianę' : 'zmian'}.`;
+  else if (!uniqueEvents.length) ui.radarState.textContent = 'Brak nowych zmian od momentu rozpoczęcia obserwacji.';
+  else ui.radarState.textContent = `Znaleziono ${uniqueEvents.length} ${uniqueEvents.length === 1 ? 'zmianę' : 'zmian'}.`;
 }
 
-async function loadRadar() {
+async function loadBrowserRadar() {
   state.radarLoading = true;
   state.radarError = false;
   renderRadar();
@@ -189,10 +461,225 @@ async function loadRadar() {
   }
 }
 
-function watchSelectedParcels(detail) {
+async function loadServerRadar() {
+  if (!state.radarAuthenticated) {
+    state.radarMonitors = [];
+    state.radarEvents = [];
+    state.radarHasMore = false;
+    renderRadar();
+    return;
+  }
+  state.radarLoading = true;
+  state.radarError = false;
+  renderRadar();
+  try {
+    const [list, feed] = await Promise.all([
+      radarClient.listMonitors(),
+      radarClient.readEvents(state.radarCursor),
+    ]);
+    state.radarMonitors = list.monitors || [];
+    state.radarEvents = [...new Map([...state.radarEvents, ...(feed.events || [])]
+      .map((event) => [event.match_id, event])).values()];
+    state.radarCursor = feed.next_after_match_id || state.radarCursor;
+    state.radarHasMore = feed.has_more === true;
+  } catch (error) {
+    state.radarError = true;
+    state.radarNotice = handleExpiredRadarProfile(error)
+      ? 'Sesja Radaru wygasła. Możesz ponownie uruchomić monitoring bez zakładania konta.'
+      : radarErrorMessage(error);
+  } finally {
+    state.radarLoading = false;
+    renderRadar();
+  }
+}
+
+async function ensureRadarProfile() {
+  if (state.radarAuthenticated) return false;
+  await radarClient.createProfile();
+  state.radarAuthenticated = true;
+  return true;
+}
+
+async function migrateBrowserWatch(watch) {
+  const created = await radarClient.createMonitor(monitorCreateBody(
+    { kind: 'parcel', parcel_id: watch.parcelId },
+    {
+      idempotencyKey: watch.serverKey,
+      source: 'local_storage_v1',
+      observedSince: watch.watchedAt,
+    },
+  ));
+  watch.serverMonitorId = created.monitor_id;
+  watch.serverPaused = created.status === 'paused';
+  delete watch.serverMigrationError;
+  delete watch.serverMigrationRetryable;
+  saveRadarWatches();
+  return created;
+}
+
+function markMigrationFailure(watch, error) {
+  watch.serverMigrationError = error?.code || 'request_failed';
+  watch.serverMigrationRetryable = isRetryableRadarError(error);
+  saveRadarWatches();
+}
+
+async function migrateBrowserWatches({ profileCreated = false } = {}) {
+  if (!state.radarWatches.length) return { migrated: 0, failed: 0 };
+  if (profileCreated) {
+    for (const watch of state.radarWatches) {
+      delete watch.serverMonitorId;
+      delete watch.serverMigrationError;
+    }
+  }
+  for (const watch of state.radarWatches) {
+    if (!watch.serverKey) watch.serverKey = crypto.randomUUID();
+  }
+  saveRadarWatches();
+  let migrated = 0;
+  let failed = 0;
+  for (const watch of state.radarWatches) {
+    if (watch.serverMonitorId) continue;
+    if (watch.serverMigrationError && watch.serverMigrationRetryable === false) {
+      failed += 1;
+      continue;
+    }
+    try {
+      const created = await migrateBrowserWatch(watch);
+      state.radarMonitors = [...new Map([...state.radarMonitors, created]
+        .map((monitor) => [monitor.monitor_id, monitor])).values()];
+      migrated += 1;
+    } catch (error) {
+      markMigrationFailure(watch, error);
+      failed += 1;
+    }
+  }
+  return { migrated, failed };
+}
+
+async function reconcilePendingCreates() {
+  let recovered = 0;
+  let failed = 0;
+  for (const body of [...state.radarPendingCreates]) {
+    try {
+      await radarClient.createMonitor(body);
+      state.radarPendingCreates = state.radarPendingCreates.filter((item) => (
+        item.idempotency_key !== body.idempotency_key
+      ));
+      saveRadarPendingCreates();
+      recovered += 1;
+    } catch (error) {
+      if (!isRetryableRadarError(error)) {
+        state.radarPendingCreates = state.radarPendingCreates.filter((item) => (
+          item.idempotency_key !== body.idempotency_key
+        ));
+        saveRadarPendingCreates();
+      }
+      failed += 1;
+    }
+  }
+  return { recovered, failed };
+}
+
+let radarInitialization;
+
+async function initializeRadar() {
+  if (radarInitialization) return radarInitialization;
+  radarInitialization = (async () => {
+    try {
+      const probe = await radarClient.probeProfile();
+      state.radarMode = probe.available ? 'server' : 'browser';
+      state.radarAuthenticated = probe.authenticated;
+      if (probe.available && (state.radarWatches.length || state.radarPendingCreates.length)) {
+        const profileCreated = await ensureRadarProfile();
+        const migration = await migrateBrowserWatches({ profileCreated });
+        const pending = await reconcilePendingCreates();
+        if (migration.failed || pending.failed) {
+          state.radarNotice = 'Część obserwacji wymaga ponowienia. Pozostałe są już bezpiecznie zsynchronizowane.';
+        } else if (migration.migrated || pending.recovered) {
+          state.radarNotice = 'Dotychczasowe obserwacje są teraz bezpiecznie zsynchronizowane.';
+        }
+      }
+    } catch {
+      state.radarMode = 'browser';
+      state.radarAuthenticated = false;
+      state.radarNotice = 'Synchronizacja monitoringu jest chwilowo niedostępna. Obserwacje pozostają na tym urządzeniu.';
+    }
+    await loadRadar();
+    renderCases();
+  })();
+  return radarInitialization;
+}
+
+async function loadRadar() {
+  if (state.radarMode === 'checking') return;
+  if (state.radarMode === 'server') return loadServerRadar();
+  return loadBrowserRadar();
+}
+
+async function watchSelectedParcels(detail) {
+  if (state.radarMode === 'checking') await initializeRadar();
+  const parcels = [...new Set((detail?.parcels || []).map((parcel) => parcel.parcel_id).filter(Boolean))]
+    .filter((parcelId) => !parcelMonitorStatus(parcelId));
+  if (!parcels.length) return;
+  if (state.radarMode === 'server') {
+    let target = parcels.length === 1
+      ? { kind: 'parcel', parcel_id: parcels[0] }
+      : { kind: 'parcel_set', parcel_ids: parcels.sort() };
+    const busyKey = `create:${target.kind}:${parcels.join('|')}`;
+    if (state.radarBusy.has(busyKey)) return;
+    state.radarBusy.add(busyKey);
+    state.radarNotice = 'Zapisuję monitoring…';
+    state.radarOpen = true;
+    renderRadar();
+    try {
+      const profileCreated = await ensureRadarProfile();
+      if (profileCreated) {
+        await migrateBrowserWatches({ profileCreated: true });
+        const remaining = parcels.filter((parcelId) => !parcelMonitorStatus(parcelId));
+        if (!remaining.length) {
+          state.radarNotice = 'Monitoring został ponownie uruchomiony.';
+          return;
+        }
+        target = remaining.length === 1
+          ? { kind: 'parcel', parcel_id: remaining[0] }
+          : { kind: 'parcel_set', parcel_ids: remaining.sort() };
+      }
+      const targetKey = monitorTargetKey(target);
+      const body = reusablePendingCreate(state.radarPendingCreates, target, crypto.randomUUID());
+      if (!state.radarPendingCreates.some((item) => monitorTargetKey(item.target) === targetKey)) {
+        state.radarPendingCreates.push(body);
+        saveRadarPendingCreates();
+      }
+      const created = await radarClient.createMonitor(body);
+      state.radarPendingCreates = state.radarPendingCreates.filter((item) => (
+        item.idempotency_key !== body.idempotency_key
+      ));
+      saveRadarPendingCreates();
+      state.radarMonitors = [...new Map([...state.radarMonitors, created]
+        .map((monitor) => [monitor.monitor_id, monitor])).values()];
+      state.radarNotice = 'Monitoring został uruchomiony.';
+    } catch (error) {
+      if (!isRetryableRadarError(error)) {
+        state.radarPendingCreates = state.radarPendingCreates.filter((item) => (
+          monitorTargetKey(item.target) !== monitorTargetKey(target)
+        ));
+        saveRadarPendingCreates();
+      }
+      state.radarNotice = handleExpiredRadarProfile(error)
+        ? 'Sesja Radaru wygasła. Spróbuj ponownie uruchomić monitoring.'
+        : radarErrorMessage(error);
+    } finally {
+      state.radarBusy.delete(busyKey);
+      renderRadar();
+      renderCases();
+      window.requestAnimationFrame(() => ui.radarPanel.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+    }
+    return;
+  }
+
   const now = new Date().toISOString();
   const known = new Set(state.radarWatches.map((watch) => watch.parcelId));
-  for (const parcel of detail?.parcels || []) {
+  for (const parcel of detail.parcels || []) {
     if (!parcel.parcel_id || known.has(parcel.parcel_id) || state.radarWatches.length >= 20) continue;
     state.radarWatches.push({
       parcelId: parcel.parcel_id,
@@ -535,12 +1022,13 @@ function renderCases() {
       void selectCase(key, { moveMap: true, showAerial: true, scrollToCard: true, toggle: false });
     });
     const radarAction = fragment.querySelector('.radar-action');
-    const allWatched = Boolean(resolvedParcelIds.length) && resolvedParcelIds.every((parcelId) => (
-      state.radarWatches.some((watch) => watch.parcelId === parcelId)
-    ));
-    radarAction.disabled = !detail || !resolvedParcelIds.length || allWatched;
-    radarAction.textContent = allWatched ? '✓ Działka jest obserwowana' : '◉ Obserwuj działkę w Radarze';
-    radarAction.addEventListener('click', () => watchSelectedParcels(detail));
+    const monitorStatuses = resolvedParcelIds.map(parcelMonitorStatus);
+    const allMonitored = Boolean(monitorStatuses.length) && monitorStatuses.every(Boolean);
+    const hasPaused = monitorStatuses.some((status) => status === 'paused');
+    radarAction.disabled = !detail || !resolvedParcelIds.length || allMonitored || state.radarMode === 'checking';
+    if (allMonitored && hasPaused) radarAction.textContent = 'Monitoring wstrzymany — wznów w Radarze';
+    else radarAction.textContent = allMonitored ? '✓ Działka jest obserwowana' : '◉ Obserwuj działkę w Radarze';
+    radarAction.addEventListener('click', () => { void watchSelectedParcels(detail); });
     button.setAttribute('aria-expanded', String(selected));
     button.addEventListener('click', () => { void selectCase(key, { moveMap: true }); });
     ui.list.append(fragment);
@@ -872,8 +1360,14 @@ ui.radarToggle.addEventListener('click', () => {
 ui.radarClose.addEventListener('click', () => {
   state.radarOpen = false;
   renderRadar();
+  ui.radarToggle.focus();
+});
+ui.radarMore.addEventListener('click', async () => {
+  await loadServerRadar();
+  if (ui.radarMore.hidden) ui.radarClose.focus();
+  else ui.radarMore.focus();
 });
 
 initializeMap();
 loadMeta().catch(() => { ui.heroCount.textContent = '—'; });
-void loadRadar();
+void initializeRadar();

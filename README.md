@@ -125,6 +125,11 @@ każdym udanym imporcie. Ten sam przebieg odzyskuje ewentualne udane importy bez
 
 API profili jest domyślnie wyłączone i zwraca 404. Włącza je dopiero
 `RADAR_SERVER_ENABLED=1`; stary read-only `GET /api/radar` pozostaje dostępny niezależnie.
+Interfejs automatycznie wykrywa ten stan: przy wyłączonym API zachowuje obecny tryb
+`localStorage`, a po włączeniu tworzy anonimowy profil, idempotentnie przenosi obserwacje i pokazuje
+sterowanie wstrzymaniem, wznowieniem oraz usunięciem monitoringu. Sekret profilu pozostaje wyłącznie
+w ciasteczku `HttpOnly`; JavaScript odczytuje tylko osobny token CSRF. Potwierdzone obserwacje
+przeglądarkowe nie są usuwane, dzięki czemu wyłączenie routera nadal ma bezpieczny fallback.
 Tworzenie profili i monitorów ma trwałe godzinne limity globalne, a profil dodatkowo ogranicza
 tworzenie, mutacje i odczyt kanału. Limit jest naliczany przed kosztownym backfillem.
 

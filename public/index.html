@@ -87,13 +87,15 @@
           <div class="radar-heading-row">
             <div>
               <p class="eyebrow">Radar zmian</p>
-              <h2 id="radar-heading">Obserwowane działki</h2>
+              <h2 id="radar-heading">Monitorowane miejsca</h2>
               <p>Zmiany są wykrywane po kolejnych oficjalnych aktualizacjach danych.</p>
             </div>
             <button class="radar-close" id="radar-close" type="button" aria-label="Zamknij Radar">×</button>
           </div>
+          <p class="radar-mode" id="radar-mode">Sprawdzam bezpieczne przechowywanie monitoringu…</p>
           <div class="radar-watches" id="radar-watches"></div>
           <div class="radar-events" id="radar-events"></div>
+          <button class="radar-more" id="radar-more" type="button" hidden>Wczytaj kolejne zmiany</button>
           <p class="radar-state" id="radar-state" role="status"></p>
         </section>
 
@@ -209,6 +211,6 @@
     </template>
 
     <script src="https://unpkg.com/maplibre-gl@5/dist/maplibre-gl.js"></script>
-    <script type="module" src="/app.js?v=polska-15"></script>
+    <script type="module" src="/app.js?v=polska-18"></script>
   </body>
 </html>
