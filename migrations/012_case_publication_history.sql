@@ -1,13 +1,9 @@
 ALTER TABLE cases
   ADD COLUMN IF NOT EXISTS ever_published boolean NOT NULL DEFAULT false;
 
-UPDATE cases
-SET ever_published=true
-WHERE published AND NOT ever_published;
-
 CREATE OR REPLACE FUNCTION preserve_case_publication_history() RETURNS trigger AS $$
 BEGIN
-  IF NEW.published THEN
+  IF NEW.published OR (TG_OP = 'UPDATE' AND OLD.published) THEN
     NEW.ever_published := true;
   END IF;
   RETURN NEW;

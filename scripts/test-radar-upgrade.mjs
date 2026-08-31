@@ -113,6 +113,24 @@ try {
     throw error;
   }
 
+  await upgrade.query("UPDATE cases SET published=true WHERE id=$1", [caseRow.rows[0].id]);
+  const migration012 = await readFile(new URL('../migrations/012_case_publication_history.sql', import.meta.url), 'utf8');
+  await upgrade.query('BEGIN');
+  try {
+    await upgrade.query("SET LOCAL statement_timeout='1s'");
+    await upgrade.query(migration012);
+    await upgrade.query("INSERT INTO schema_migrations(name) VALUES('012_case_publication_history.sql')");
+    await upgrade.query('COMMIT');
+  } catch (error) {
+    await upgrade.query('ROLLBACK');
+    throw error;
+  }
+  const currentPublication = await upgrade.query('SELECT published,ever_published FROM cases WHERE id=$1', [caseRow.rows[0].id]);
+  assert.deepEqual(currentPublication.rows[0], { published: true, ever_published: false });
+  await upgrade.query('UPDATE cases SET published=false WHERE id=$1', [caseRow.rows[0].id]);
+  const withdrawnPublication = await upgrade.query('SELECT published,ever_published FROM cases WHERE id=$1', [caseRow.rows[0].id]);
+  assert.deepEqual(withdrawnPublication.rows[0], { published: false, ever_published: true });
+
   const oldEvent = await upgrade.query('SELECT match_parcel_ids FROM case_events ORDER BY id LIMIT 1');
   assert.equal(oldEvent.rows[0].match_parcel_ids, null);
   const baseline = await upgrade.query(`
@@ -186,7 +204,7 @@ try {
   const version = await upgrade.query('SELECT PostGIS_Version() AS version');
   console.log(JSON.stringify({
     ok: true,
-    upgrade: '010_to_011',
+    upgrade: '010_to_012',
     interrupted_deployment_rollback: true,
     postgis: version.rows[0].version,
   }));

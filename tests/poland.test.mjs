@@ -48,6 +48,8 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.match(serverRadarMigration, /radar_charge_global_rate/);
   assert.match(serverRadarMigration, /pg_advisory_xact_lock/);
   assert.match(publicationHistoryMigration, /ever_published/);
+  assert.doesNotMatch(publicationHistoryMigration, /UPDATE cases\s+SET ever_published/);
+  assert.match(publicationHistoryMigration, /OLD\.published/);
   assert.match(publicationHistoryMigration, /preserve_case_publication_history/);
   assert.match(importer, /OBOKMNIE_PERIOD_START/);
   assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
