@@ -40,6 +40,8 @@ try {
   assert.equal(migrations.rowCount, 1);
   const publicationHistoryMigration = await client.query("SELECT name FROM schema_migrations WHERE name='012_case_publication_history.sql'");
   assert.equal(publicationHistoryMigration.rowCount, 1);
+  const emailAlertMigration = await client.query("SELECT name FROM schema_migrations WHERE name='014_radar_email_alert_outbox.sql'");
+  assert.equal(emailAlertMigration.rowCount, 1);
 
   await client.query(`
     TRUNCATE radar_matches,radar_watch_parcels,radar_watches,radar_profiles,
@@ -74,6 +76,19 @@ try {
       ($1,$2,$3,clock_timestamp()+interval '90 days',clock_timestamp()+interval '365 days'),
       ($4,$5,$6,clock_timestamp()+interval '90 days',clock_timestamp()+interval '365 days')
   `, [profileId, hash(), hash(), profileTwoId, hash(), hash()]);
+  await client.query(`
+    INSERT INTO radar_email_subscriptions(
+      profile_id,email,email_fingerprint,state,
+      service_consent_version,service_consent_text,service_consented_at,
+      marketing_consent,marketing_consent_version,marketing_consent_text,
+      confirmed_at
+    ) VALUES(
+      $1,'postgis-alert@example.com',$2,'active',
+      'radar_service_alerts_pl_v1','Zgoda testowa.',clock_timestamp(),
+      false,'radar_marketing_pl_v1','Zgoda marketingowa testowa.',
+      clock_timestamp()
+    )
+  `, [profileId, hash()]);
 
   const watches = [
     [watchA, profileId, randomUUID(), 'parcel', null, null],
@@ -135,6 +150,20 @@ try {
   assert.ok(smokeProjectionMilliseconds <= 2_000);
   assert.equal(Number(firstProjection.rows[0].event_count), 1);
   assert.equal(Number(firstProjection.rows[0].match_count), 5);
+  const firstAlerts = await client.query(`
+    SELECT count(*)::integer AS count
+    FROM radar_email_alerts alert
+    JOIN case_events event ON event.id=alert.event_id
+    WHERE event.import_id=$1
+  `, [newImport]);
+  assert.equal(firstAlerts.rows[0].count, 1);
+  await client.query('SELECT * FROM radar_project_import($1)', [newImport]);
+  assert.equal((await client.query(`
+    SELECT count(*)::integer AS count
+    FROM radar_email_alerts alert
+    JOIN case_events event ON event.id=alert.event_id
+    WHERE event.import_id=$1
+  `, [newImport])).rows[0].count, 1);
 
   const changedImport = await startImport();
   await client.query('BEGIN');
@@ -282,6 +311,12 @@ try {
   assert.equal(Number(zero.match_count), 0);
   const replay = await client.query('SELECT * FROM radar_project_import($1)', [zeroImport]);
   assert.equal(Number(replay.rows[0].event_count), 0);
+  assert.equal((await client.query(`
+    SELECT count(*)::integer AS count
+    FROM radar_email_alerts alert
+    JOIN case_events event ON event.id=alert.event_id
+    WHERE event.import_id=$1
+  `, [zeroImport])).rows[0].count, 0);
 
   const raceWatch = randomUUID();
   const raceImport = await startImport();
@@ -359,6 +394,12 @@ try {
     client.query('SELECT * FROM radar_project_import($1)', [failedImport]),
     /radar_projection_requires_successful_import/,
   );
+  assert.equal((await client.query(`
+    SELECT count(*)::integer AS count
+    FROM radar_email_alerts alert
+    JOIN case_events event ON event.id=alert.event_id
+    WHERE event.import_id=$1
+  `, [failedImport])).rows[0].count, 0);
 
   const failedMatches = await client.query(`
     SELECT count(*)::integer AS count

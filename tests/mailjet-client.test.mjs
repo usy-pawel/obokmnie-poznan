@@ -88,6 +88,25 @@ test('sender uses the fixed v3.1 endpoint, bounded payload and inspects per-mess
   });
 });
 
+test('alert campaign asks Mailjet to deduplicate one recipient within a stable campaign', async () => {
+  let payload;
+  const send = createMailjetSender({
+    environment,
+    fetchImpl: async (_url, options) => {
+      payload = JSON.parse(options.body);
+      return new Response(JSON.stringify({
+        Messages: [{
+          Status: 'success',
+          To: [{ MessageID: '456', MessageUUID: 'uuid-456' }],
+        }],
+      }), { status: 200 });
+    },
+  });
+  await send({ ...message, customId: 'alert:1:radar_alert_v1', campaignId: 'rza_radar_alert_v1_42' });
+  assert.equal(payload.Messages[0].CustomCampaign, 'rza_radar_alert_v1_42');
+  assert.equal(payload.Messages[0].DeduplicateCampaign, true);
+});
+
 test('invalid messages and partial Mailjet failures fail closed without leaking provider details', async () => {
   let calls = 0;
   const invalid = createMailjetSender({

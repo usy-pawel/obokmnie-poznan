@@ -164,6 +164,7 @@ async function installDeterministicRoutes(page, {
         .replace(maplibreCssSri, sri('')),
   });
   await page.route(`${origin}/`, appShell);
+  await page.route(`${origin}/?radar=1`, appShell);
   await page.route(`${origin}/sprawa/**`, appShell);
   await page.route(`${origin}/potwierdz-email**`, appShell);
   await page.route(maplibreScriptUrl, (route) => route.fulfill({
@@ -436,6 +437,20 @@ test('powiadomienia e-mail wymagają osobnej zgody i ręcznego double opt-in', a
   await page.getByRole('button', { name: 'Zapisz preferencję marketingową' }).click();
   await expect(page.locator('#radar-email-notice')).toContainText('Preferencja marketingowa została zapisana');
   expect(diagnostics.emailRequests[2]).toMatchObject({ marketing_consent: true });
+  expect(diagnostics.pageErrors).toEqual([]);
+  expect(diagnostics.unexpectedRequests).toEqual([]);
+});
+
+test('bezpieczny link z alertu otwiera zarządzanie bez tokenu i adresu w URL', async ({ page }) => {
+  const diagnostics = await installDeterministicRoutes(page, { radarEmail: true });
+  await page.context().addCookies([{
+    name: 'radar_csrf', value: 'csrf-token', domain: '127.0.0.1', path: '/', sameSite: 'Strict',
+  }]);
+  await page.goto(`${appOrigin()}/?radar=1`);
+  await expect(page.locator('#radar-panel')).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Monitorowane miejsca' })).toBeVisible();
+  expect(page.url()).not.toContain('token');
+  expect(page.url()).not.toContain('@');
   expect(diagnostics.pageErrors).toEqual([]);
   expect(diagnostics.unexpectedRequests).toEqual([]);
 });

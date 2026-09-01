@@ -11,6 +11,7 @@ import {
 import { readDataStatus, readHealth } from './lib/service-health.mjs';
 import { createPrivateMaintenancePreflightHandler } from './lib/maintenance-private-api.mjs';
 import { createMailjetSender, mailjetConfigurationStatus } from './lib/mailjet-client.mjs';
+import { startRadarAlertDispatcher } from './lib/radar-alerts.mjs';
 import { createRadarSubscriptionsRouter } from './lib/radar-subscriptions.mjs';
 
 const app = express();
@@ -138,6 +139,12 @@ if (process.env.RADAR_SERVER_ENABLED === '1') {
     ? createMailjetSender({ environment: process.env })
     : null;
   app.use('/api/radar', createRadarSubscriptionsRouter({ database: pool, mailSender }));
+  startRadarAlertDispatcher({
+    database: pool,
+    mailSender,
+    environment: process.env,
+    onError: (details) => console.error('radar alert dispatcher failed', details),
+  });
 }
 
 app.get('/api/meta', async (request, response, next) => {

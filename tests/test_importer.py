@@ -113,7 +113,9 @@ class ImporterTests(unittest.TestCase):
                     return (1,)
                 if "radar_purge_email_data" in self.sql:
                     return (2, 3, 4)
-                return (0, 0, 0, 0, 0)
+                if "radar_purge_email_alerts" in self.sql:
+                    return (5,)
+                return (0, 0, 0, 0, 0, 0)
 
         class Connection:
             def __init__(self):
@@ -142,13 +144,15 @@ class ImporterTests(unittest.TestCase):
             "radar_purged_pending_emails": 2,
             "radar_purged_email_deliveries": 3,
             "radar_purged_email_suppressions": 4,
+            "radar_purged_email_alerts": 5,
             "radar_missing_projections": 0,
             "radar_expired_profiles_remaining": 0,
             "radar_expired_pending_emails_remaining": 0,
             "radar_expired_email_deliveries_remaining": 0,
             "radar_expired_email_suppressions_remaining": 0,
+            "radar_expired_email_alerts_remaining": 0,
         })
-        self.assertEqual(connection.commits, 4)
+        self.assertEqual(connection.commits, 5)
         self.assertTrue(connection.closed)
 
     def test_housekeeping_only_mode_skips_import_locks_and_data_pipeline(self):

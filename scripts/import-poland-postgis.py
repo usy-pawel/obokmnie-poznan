@@ -478,6 +478,7 @@ def run_radar_housekeeping():
     purged_pending_emails = 0
     purged_email_deliveries = 0
     purged_email_suppressions = 0
+    purged_email_alerts = 0
     try:
         with connection.cursor() as cursor:
             cursor.execute("SET LOCAL lock_timeout='5s'")
@@ -513,6 +514,17 @@ def run_radar_housekeeping():
             if max(pending, deliveries, suppressions) < 1000:
                 break
 
+        for _batch in range(50):
+            with connection.cursor() as cursor:
+                cursor.execute("SET LOCAL lock_timeout='5s'")
+                cursor.execute("SET LOCAL statement_timeout='30s'")
+                cursor.execute("SELECT radar_purge_email_alerts(1000)")
+                deleted = cursor.fetchone()[0]
+            connection.commit()
+            purged_email_alerts += deleted
+            if deleted < 1000:
+                break
+
         with connection.cursor() as cursor:
             cursor.execute("""
               SELECT
@@ -525,13 +537,16 @@ def run_radar_housekeeping():
                 (SELECT count(*)::int FROM radar_email_deliveries
                  WHERE expires_at<=clock_timestamp()),
                 (SELECT count(*)::int FROM radar_email_suppressions
+                 WHERE expires_at<=clock_timestamp()),
+                (SELECT count(*)::int FROM radar_email_alerts
                  WHERE expires_at<=clock_timestamp())
               FROM imports imported
               LEFT JOIN radar_import_projections projection ON projection.import_id=imported.id
               WHERE imported.status='success' AND imported.finished_at IS NOT NULL
             """)
             (missing_projections, expired_profiles, expired_pending_emails,
-             expired_email_deliveries, expired_email_suppressions) = cursor.fetchone()
+             expired_email_deliveries, expired_email_suppressions,
+             expired_email_alerts) = cursor.fetchone()
         connection.commit()
         return {
             "radar_recovered_imports": recovered_imports,
@@ -541,11 +556,13 @@ def run_radar_housekeeping():
             "radar_purged_pending_emails": purged_pending_emails,
             "radar_purged_email_deliveries": purged_email_deliveries,
             "radar_purged_email_suppressions": purged_email_suppressions,
+            "radar_purged_email_alerts": purged_email_alerts,
             "radar_missing_projections": missing_projections,
             "radar_expired_profiles_remaining": expired_profiles,
             "radar_expired_pending_emails_remaining": expired_pending_emails,
             "radar_expired_email_deliveries_remaining": expired_email_deliveries,
             "radar_expired_email_suppressions_remaining": expired_email_suppressions,
+            "radar_expired_email_alerts_remaining": expired_email_alerts,
         }
     finally:
         connection.close()
@@ -562,6 +579,7 @@ def checked_radar_housekeeping():
         "radar_expired_pending_emails_remaining",
         "radar_expired_email_deliveries_remaining",
         "radar_expired_email_suppressions_remaining",
+        "radar_expired_email_alerts_remaining",
     )
     if any(evidence.get(key, 0) > 0 for key in incomplete):
         raise RadarHousekeepingFailed("radar_housekeeping_incomplete", evidence)

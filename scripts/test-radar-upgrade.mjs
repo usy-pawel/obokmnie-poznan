@@ -88,13 +88,12 @@ try {
   const migration011 = await readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8');
   await upgrade.query('BEGIN');
   await upgrade.query(migration011);
-  const interruptedConnectionErrors = [];
-  upgrade.on('error', (error) => interruptedConnectionErrors.push(error));
+  const interruptedConnection = new Promise((resolve) => upgrade.once('error', resolve));
   const interruptedBackend = await upgrade.query('SELECT pg_backend_pid() AS pid');
   await admin.query('SELECT pg_terminate_backend($1)', [interruptedBackend.rows[0].pid]);
-  await assert.rejects(upgrade.query('COMMIT'));
+  const interruptedConnectionError = await interruptedConnection;
   await upgrade.end().catch(() => {});
-  assert.equal(interruptedConnectionErrors.every((error) => error.code === '57P01'), true);
+  assert.equal(interruptedConnectionError.code, '57P01');
   upgrade = new pg.Client(config(upgradeUrl, 'radar_upgrade_test_reconnected'));
   await upgrade.connect();
   const interruptedDeployment = await upgrade.query(`
@@ -115,7 +114,6 @@ try {
     await upgrade.query('ROLLBACK');
     throw error;
   }
-
   await upgrade.query("UPDATE cases SET published=true WHERE id=$1", [caseRow.rows[0].id]);
   const migration012 = await readFile(new URL('../migrations/012_case_publication_history.sql', import.meta.url), 'utf8');
   await upgrade.query('BEGIN');
@@ -140,6 +138,18 @@ try {
     await upgrade.query("SET LOCAL statement_timeout='2s'");
     await upgrade.query(migration013);
     await upgrade.query("INSERT INTO schema_migrations(name) VALUES('013_radar_email_double_opt_in.sql')");
+    await upgrade.query('COMMIT');
+  } catch (error) {
+    await upgrade.query('ROLLBACK');
+    throw error;
+  }
+
+  const migration014 = await readFile(new URL('../migrations/014_radar_email_alert_outbox.sql', import.meta.url), 'utf8');
+  await upgrade.query('BEGIN');
+  try {
+    await upgrade.query("SET LOCAL statement_timeout='2s'");
+    await upgrade.query(migration014);
+    await upgrade.query("INSERT INTO schema_migrations(name) VALUES('014_radar_email_alert_outbox.sql')");
     await upgrade.query('COMMIT');
   } catch (error) {
     await upgrade.query('ROLLBACK');
@@ -254,7 +264,7 @@ try {
   const version = await upgrade.query('SELECT PostGIS_Version() AS version');
   console.log(JSON.stringify({
     ok: true,
-    upgrade: '010_to_013',
+    upgrade: '010_to_014',
     interrupted_deployment_rollback: true,
     postgis: version.rows[0].version,
   }));

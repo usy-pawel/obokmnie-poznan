@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, serverRadarMigration, publicationHistoryMigration, radarSubscriptions, frontend, html, styles, importer, migrateScript] = await Promise.all([
+const [server, serviceHealth, migration, integrityMigration, cityIndexMigration, contextMigration, historyIndexMigration, radarMigration, serverRadarMigration, publicationHistoryMigration, emailAlertMigration, radarAlerts, radarSubscriptions, frontend, html, styles, importer, migrateScript] = await Promise.all([
   readFile(new URL('../server.js', import.meta.url), 'utf8'),
   readFile(new URL('../lib/service-health.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/001_init.sql', import.meta.url), 'utf8'),
@@ -13,6 +13,8 @@ const [server, serviceHealth, migration, integrityMigration, cityIndexMigration,
   readFile(new URL('../migrations/009_change_radar.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/011_server_radar.sql', import.meta.url), 'utf8'),
   readFile(new URL('../migrations/012_case_publication_history.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../migrations/014_radar_email_alert_outbox.sql', import.meta.url), 'utf8'),
+  readFile(new URL('../lib/radar-alerts.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../lib/radar-subscriptions.mjs', import.meta.url), 'utf8'),
   readFile(new URL('../public/app.js', import.meta.url), 'utf8'),
   readFile(new URL('../public/index.html', import.meta.url), 'utf8'),
@@ -51,6 +53,12 @@ test('PostGIS schema keeps cases, parcels and their exact relationships', () => 
   assert.doesNotMatch(publicationHistoryMigration, /UPDATE cases\s+SET ever_published/);
   assert.match(publicationHistoryMigration, /OLD\.published/);
   assert.match(publicationHistoryMigration, /preserve_case_publication_history/);
+  assert.match(emailAlertMigration, /radar_import_projection_enqueue_email_alerts/);
+  assert.match(emailAlertMigration, /UNIQUE \(profile_id, event_id, content_version\)/);
+  assert.match(emailAlertMigration, /imported\.status = 'success'/);
+  assert.match(emailAlertMigration, /radar_cancel_unsent_email_alerts/);
+  assert.match(radarAlerts, /FOR UPDATE OF alert,subscription SKIP LOCKED/);
+  assert.match(radarAlerts, /RADAR_ALERT_CONTENT_VERSION/);
   assert.match(importer, /OBOKMNIE_PERIOD_START/);
   assert.match(importer, /OBOKMNIE_SKIP_ULDK/);
   assert.match(importer, /Oczekiwano 18 archiwów GUNB/);

@@ -175,6 +175,15 @@ Uruchomienie wysyłki wymaga kompletnej konfiguracji Mailjet oraz osobnej bramki
 `RADAR_PUBLIC_ORIGIN` (produkcyjnie `https://www.radarzmian.pl`). Bez włączonej bramki formularz
 zapisu nie jest pokazywany nowym użytkownikom i żadna wiadomość nie jest wysyłana.
 
+Alerty o zmianach korzystają z istniejącej projekcji `radar_project_import`. Dopiero zapis udanej
+projekcji z rzeczywistym dopasowaniem tworzy rekord outboxa; failed import i zero-diff nie mogą go
+utworzyć. Unikalny klucz `(profile_id, event_id, content_version)` oraz stabilna kampania Mailjet
+ograniczają jeden alert do jednej potwierdzonej subskrypcji, zmiany i wersji treści także po retry,
+ponownym imporcie i równoległym workerze. Treść zawiera trwały `/sprawa/{case_key}` oraz bezpieczny
+`/?radar=1` bez tokenu i adresu e-mail w URL. Niewysłane alerty są anulowane po wypisaniu lub zmianie
+adresu, a techniczny receipt bez treści wiadomości wygasa po 30 dniach. Dispatcher nie startuje,
+dopóki `MAILJET_SEND_ENABLED` nie ma dokładnie wartości `true`.
+
 Token potwierdzający jest jednorazowy i ważny 24 godziny. Niepotwierdzony adres jest usuwany po
 7 dniach. Aktywny adres podlega retencji profilu: 90 dni bez aktywności, maksymalnie 365 dni.
 Techniczne receipty dostawcy nie zawierają adresu, tematu ani treści i są usuwane po 30 dniach;

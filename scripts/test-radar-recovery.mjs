@@ -207,6 +207,7 @@ try {
   await admin.query(`CREATE DATABASE "${sourceDatabase}"`);
   await runNode('scripts/migrate.mjs', { ...environment, DATABASE_URL: sourceUrl });
   await runNode('scripts/test-radar-postgis.mjs', { ...environment, DATABASE_URL: sourceUrl });
+  await runNode('scripts/test-radar-alerts.mjs', { ...environment, DATABASE_URL: sourceUrl });
   await seedActiveMaintenanceLease(sourceUrl);
   const before = await recoverySnapshot(sourceUrl);
 

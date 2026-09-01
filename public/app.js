@@ -1710,6 +1710,11 @@ window.addEventListener('popstate', () => {
 });
 
 initializeEmailConfirmation();
+if (new URLSearchParams(window.location.search).get('radar') === '1') {
+  state.radarOpen = true;
+  localStorage.setItem(RADAR_SEEN_KEY, new Date().toISOString());
+  renderRadar();
+}
 initializeMap();
 loadMeta().catch(() => { ui.heroCount.textContent = '—'; });
 void initializeRadar();
